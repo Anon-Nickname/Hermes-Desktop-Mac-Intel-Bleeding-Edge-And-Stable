@@ -20,10 +20,20 @@ import { promisify } from 'node:util'
  * offered exactly when a newer build exists to install. The compare API
  * doubles as the changelog source: the commits between the two builds.
  *
+ * Two deliberate behaviors on top of that:
+ * - Track switching stays possible when everything is up to date: viewing the
+ *   other track always offers its newest build (a switch is an "update" to a
+ *   different build), while viewing the track the running build came from
+ *   never offers an older build as an update.
+ * - On bleeding-edge the status carries upstreamBehind, the informational
+ *   distance of the running build to upstream main HEAD. It is a freshness
+ *   signal for the dialog only - it never drives the update offer.
+ *
  * All GitHub API calls are unauthenticated (60 requests/hour per IP), so
- * checks are kept to at most two calls, cached for ten minutes, and fall back
- * to the last successful check when the API is unavailable. A rate-limit 403
- * is reported to the dialog as what it is, with the reset time.
+ * checks are kept to two calls on stable and at most three on bleeding,
+ * cached for ten minutes, and fall back to the last successful check when
+ * the API is unavailable. A rate-limit 403 is reported to the dialog as
+ * what it is, with the reset time.
  *
  * updater/inject.py substitutes the __PLACEHOLDER__ values during the build.
  */
@@ -106,7 +116,7 @@ function releaseSha(release: any): string | null {
 // identity-in-notes convention and cannot be identity-compared, so they are
 // ignored. /releases/latest is never used: the Latest badge is shared
 // between both tracks and says nothing about either track's newest build.
-async function latestOwnRelease(channel: UpdateChannel) {
+async function ownReleases(channel: UpdateChannel) {
   const releases = await githubJson('repos/' + releaseRepo + '/releases?per_page=50')
   if (!Array.isArray(releases)) throw new Error('Unexpected releases response')
   const candidates = releases.filter(
@@ -120,22 +130,45 @@ async function latestOwnRelease(channel: UpdateChannel) {
   )
   if (candidates.length === 0) throw new Error('No ' + channel + ' build has been published yet')
   candidates.sort((a: any, b: any) => Date.parse(b.published_at) - Date.parse(a.published_at))
-  return candidates[0]
+  return candidates
+}
+
+async function latestOwnRelease(channel: UpdateChannel) {
+  return (await ownReleases(channel))[0]
+}
+
+// Distance of the running build to upstream main HEAD. Informational only -
+// it feeds the dialog's freshness note, never the update offer, and any
+// failure (including rate limiting) degrades it to absent.
+async function informationalUpstreamBehind(): Promise<number | null> {
+  try {
+    const compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + currentSha + '...main')
+    if (compared?.status !== 'ahead') return null
+    return Number.isInteger(compared?.ahead_by) && compared.ahead_by > 0 ? compared.ahead_by : null
+  } catch {
+    return null
+  }
 }
 
 // The update decision, one compare call at most. Every state of the running
-// build relative to the newest published build is handled explicitly:
+// build relative to the newest published build on the viewed track is
+// handled explicitly:
 // - identical: nothing to offer.
 // - ahead: the published build is newer - offer it, with the real distance
-//   and the commits between the two builds as the changelog.
-// - behind: the running build is newer than anything published yet (the
-//   pipeline is still building the next one) - nothing to offer.
+//   and the commits between the two builds as the changelog. Also the shape
+//   of a stable -> bleeding-edge track switch.
+// - behind: the running build sits ahead of the viewed track's newest build
+//   on upstream history. If the running build itself came from this track
+//   (its SHA is one of this track's releases), the pipeline is simply still
+//   building the next one - nothing to offer. If it did not, the user is
+//   viewing the OTHER track - offer its newest build, because switching
+//   tracks must stay possible from the update dialog.
 // - diverged or 404: upstream history no longer contains the running build's
 //   commit (rewrite or shallow oddity), so ordering is unknowable - offer
 //   the newest build to get back onto the track, with no invented count.
 async function releaseStatus(channel: UpdateChannel) {
-  const release = await latestOwnRelease(channel)
-  const targetSha = releaseSha(release) as string
+  const releases = await ownReleases(channel)
+  const targetSha = releaseSha(releases[0]) as string
   const upToDate = { targetSha, behind: 0 as number | null, commits: [] as any[], updateAvailable: false }
   if (targetSha === currentSha) return upToDate
 
@@ -151,7 +184,11 @@ async function releaseStatus(channel: UpdateChannel) {
 
   const status = compared?.status
   if (status === 'identical') return upToDate
-  if (status === 'behind') return upToDate
+  if (status === 'behind') {
+    const sameTrack = releases.some((release: any) => releaseSha(release) === currentSha)
+    if (sameTrack) return upToDate
+    return { targetSha, behind: null, commits: [], updateAvailable: true }
+  }
   if (status === 'ahead') {
     const behind = Number.isInteger(compared?.ahead_by) && compared.ahead_by >= 0 ? compared.ahead_by : null
     const commits = Array.isArray(compared?.commits)
@@ -208,6 +245,7 @@ export function installBleedingEdgeUpdater(): void {
         behind: release.behind,
         commits: release.commits,
         updateAvailable: release.updateAvailable,
+        upstreamBehind: channel === 'bleeding-edge' ? await informationalUpstreamBehind() : null,
         fetchedAt: Date.now()
       }
       await writeCheckCache(channel, status)
