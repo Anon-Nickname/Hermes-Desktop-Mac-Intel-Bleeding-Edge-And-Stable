@@ -12,6 +12,25 @@ import sys
 from pathlib import Path
 
 workspace = Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+# Declare the override's informational upstreamBehind field on the status
+# type (produced by the injected main-process override, consumed below and
+# in the About patch). The build runs no typecheck, but keep tsc honest.
+gd = workspace / 'apps/desktop/src/global.d.ts'
+gd_text = gd.read_text()
+old_anchor = """   *  literal number. */
+  behind?: number | null
+  currentSha?: string"""
+new_anchor = """   *  literal number. */
+  behind?: number | null
+  currentSha?: string
+  /** Intel builds, bleeding track only: informational distance of the running
+   *  build to upstream main HEAD. A freshness signal, never an update offer. */
+  upstreamBehind?: number | null"""
+count = gd_text.count(old_anchor)
+if count != 1:
+    sys.exit(f'global.d.ts anchor missing or ambiguous ({count}x)')
+gd.write_text(gd_text.replace(old_anchor, new_anchor, 1))
+
 target = workspace / 'apps/desktop/src/app/updates-overlay.tsx'
 text = target.read_text()
 
@@ -100,6 +119,9 @@ replace_once(
     "        {phase === 'idle' && (\n          <>\n            {!isBackend && (\n"
     '              <div className="px-6 pt-4">\n'
     '                <UpdateChannelPicker channel={updateChannel} disabled={checking} onSwitch={handleChannelSwitch} />\n'
+    '                {(status?.upstreamBehind ?? 0) > 0 && (\n'
+    '                  <p className="mt-1.5 text-center text-[0.625rem] text-muted-foreground">{status.upstreamBehind} commits behind upstream main</p>\n'
+    '                )}\n'
     '              </div>\n'
     '            )}\n'
     '          <IdleView',
