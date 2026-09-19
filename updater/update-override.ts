@@ -25,9 +25,10 @@ import { promisify } from 'node:util'
  *   other track always offers its newest build (a switch is an "update" to a
  *   different build), while viewing the track the running build came from
  *   never offers an older build as an update.
- * - On bleeding-edge the status carries upstreamBehind, the informational
- *   distance of the running build to upstream main HEAD. It is a freshness
- *   signal for the dialog only - it never drives the update offer.
+ * - On the bleeding-edge track the status carries upstreamBehind, the
+ *   informational distance of that track's newest published build to
+ *   upstream main HEAD. It is a freshness signal for the dialog only - it
+ *   never drives the update offer.
  *
  * All GitHub API calls are unauthenticated (60 requests/hour per IP), so
  * checks are kept to two calls on stable and at most three on bleeding,
@@ -137,12 +138,14 @@ async function latestOwnRelease(channel: UpdateChannel) {
   return (await ownReleases(channel))[0]
 }
 
-// Distance of the running build to upstream main HEAD. Informational only -
-// it feeds the dialog's freshness note, never the update offer, and any
-// failure (including rate limiting) degrades it to absent.
-async function informationalUpstreamBehind(): Promise<number | null> {
+// Distance of the viewed track's newest published build to upstream main
+// HEAD. Informational only - it feeds the dialog's freshness note, never the
+// update offer, and any failure (including rate limiting) degrades it to
+// absent. Measured from the track's newest build, not the running one, so a
+// stable user viewing the bleeding-edge track sees how fresh that track is.
+async function informationalUpstreamBehind(baseSha: string): Promise<number | null> {
   try {
-    const compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + currentSha + '...main')
+    const compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + baseSha + '...main')
     if (compared?.status !== 'ahead') return null
     return Number.isInteger(compared?.ahead_by) && compared.ahead_by > 0 ? compared.ahead_by : null
   } catch {
@@ -245,7 +248,7 @@ export function installBleedingEdgeUpdater(): void {
         behind: release.behind,
         commits: release.commits,
         updateAvailable: release.updateAvailable,
-        upstreamBehind: channel === 'bleeding-edge' ? await informationalUpstreamBehind() : null,
+        upstreamBehind: channel === 'bleeding-edge' ? await informationalUpstreamBehind(release.targetSha) : null,
         fetchedAt: Date.now()
       }
       await writeCheckCache(channel, status)
