@@ -47,7 +47,7 @@ Every release also offers a ZIP and a `SHA256SUMS.txt` checksum file, and names 
 
 ## Switching tracks in the app
 
-Open the update dialog (the update button in the app footer, or **Settings - About - Check now**). A track picker at the top of the dialog offers **Bleeding edge** and **Stable**:
+Open the update dialog (the update button in the app footer, or **Settings - About - Open updates**). A track picker at the top of the dialog - and in **Settings - About** itself - offers **Bleeding edge** and **Stable**:
 
 - Switching re-checks updates against that track immediately.
 - **Install** then downloads that track's latest build from this repository, so you can move between tracks in either direction without reinstalling.
@@ -70,6 +70,8 @@ The workflow injects an updater override into the Electron main process at build
 3. mounts it and replaces `/Applications/Hermes.app`;
 4. removes the quarantine attribute;
 5. detaches the image and relaunches Hermes.
+
+The check itself compares build identity only: the running build's upstream commit (baked at build time) against the newest published build's upstream commit (recorded in its release notes). An update is offered exactly when the published build is newer - upstream's own main branch and tags are never consulted, so a fast-moving upstream can never produce a permanent false update offer, and the commit list shown for an available update is the upstream history between the two builds. If the running build's commit is unknown to upstream (rewritten history), the newest build is offered without a distance count.
 
 Update checks use the unauthenticated GitHub API, which allows 60 requests per hour per IP. To stay well under that, each check costs two API calls and results are cached for ten minutes. If GitHub rate-limits a check, the dialog says so plainly and shows when to retry; if a previous check succeeded, the app keeps showing that result instead of an error.
 
@@ -103,3 +105,4 @@ The automation lives in [`.github/workflows/`](.github/workflows) and [`updater/
 Hermes Agent is developed by [NousResearch](https://github.com/NousResearch/hermes-agent). Intel macOS rebuild groundwork by [evencj11](https://github.com/evencj11/hermes-agent-desktop-intel-mac-rebuild).
 
 The workflows and documentation in this repository are available under the [MIT License](LICENSE). Upstream Hermes Agent remains subject to its own license. This repository is not affiliated with or endorsed by Nous Research.
+<!-- Updater behavior documented above reflects release-identity checking. -->
