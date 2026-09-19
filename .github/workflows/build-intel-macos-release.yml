@@ -172,6 +172,22 @@ jobs:
           # workflow's badge re-pin uses.
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --latest
 
+      - name: Attach fixed-name download assets
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Fixed asset names give the README a permanent one-click download
+          # URL via /releases/latest/download/<name>. The files are byte-
+          # identical copies of this release's versioned assets.
+          cp "release/${ARTIFACT_BASENAME}-mac-x64.dmg" release/Hermes-bleeding-edge-mac-x64.dmg
+          cp "release/${ARTIFACT_BASENAME}-mac-x64.zip" release/Hermes-bleeding-edge-mac-x64.zip
+          gh release upload "$RELEASE_TAG" \
+            release/Hermes-bleeding-edge-mac-x64.dmg \
+            release/Hermes-bleeding-edge-mac-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   cooldown:
     needs: [discover, build]
     if: ${{ always() && needs.discover.outputs.should_build == 'true' }}
