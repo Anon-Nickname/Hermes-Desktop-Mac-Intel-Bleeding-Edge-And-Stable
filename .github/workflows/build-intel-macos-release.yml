@@ -2,7 +2,7 @@ name: Build Intel macOS bleeding edge
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -196,3 +196,4 @@ jobs:
     steps:
       - name: Hold build concurrency for five minutes
         run: sleep 300
+# Cadence set to 5 minutes per owner request 2026-09-19.
