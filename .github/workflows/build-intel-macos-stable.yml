@@ -44,7 +44,7 @@ jobs:
             upstream_sha="$ref_sha"
           fi
           short_sha="${upstream_sha:0:12}"
-          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select(.tag_name | startswith("stable-"))][0].body // ""' 2>/dev/null | sed -n 's/^Upstream-SHA: //p' | head -1 || true)"
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select((.draft|not) and (.prerelease|not) and (.tag_name | startswith("stable-")))] | sort_by(.published_at) | reverse | .[0].body // ""' 2>/dev/null | sed -n 's/^Upstream-SHA: //p' | head -1 || true)"
           should_build=false
           if [[ "$FORCE" == "true" || -z "$latest_sha" || "$upstream_sha" != "$latest_sha" ]]; then should_build=true; fi
           echo "upstream_tag=$upstream_tag" >> "$GITHUB_OUTPUT"
@@ -91,6 +91,9 @@ jobs:
 
       - name: Patch update dialog with track picker
         run: python3 pipeline/updater/patch-updates-overlay.py
+
+      - name: Patch About settings with update entry and track picker
+        run: python3 pipeline/updater/patch-about-settings.py
 
       - uses: actions/setup-node@v7
         with:
@@ -181,7 +184,7 @@ jobs:
           # Stable tags outrank bleeding tags on semver, so GitHub's automatic
           # latest-release heuristic would hand this release the badge. The
           # badge belongs to the bleeding-edge track by design.
-          latest_bleeding="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select(.prerelease == false and .draft == false and (.tag_name | startswith("bleeding-edge-")))][0].tag_name // ""')"
+          latest_bleeding="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select(.prerelease == false and .draft == false and (.tag_name | startswith("bleeding-edge-")))] | sort_by(.published_at) | reverse | .[0].tag_name // ""')"
           if [[ -n "$latest_bleeding" ]]; then
             gh release edit "$latest_bleeding" --repo "$GITHUB_REPOSITORY" --latest
           fi
@@ -218,3 +221,5 @@ jobs:
     steps:
       - name: Hold build concurrency for five minutes
         run: sleep 300
+
+# Updater: release-identity checks; About page carries the update entry point.
