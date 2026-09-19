@@ -1,0 +1,262 @@
+name: Build Intel macOS bleeding edge
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Build even if this upstream commit is already released"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: intel-macos-bleeding-edge
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      upstream_sha: ${{ steps.check.outputs.upstream_sha }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+    steps:
+      - id: check
+        name: Compare upstream main with latest own release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rebuild }}
+        run: |
+          set -euo pipefail
+          upstream_sha="$(gh api repos/NousResearch/hermes-agent/commits/main --jq .sha)"
+          short_sha="${upstream_sha:0:12}"
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.body // ""' 2>/dev/null | sed -n 's/^Upstream-SHA: //p' | head -1 || true)"
+          should_build=false
+          if [[ "$FORCE" == "true" || "$upstream_sha" != "$latest_sha" ]]; then should_build=true; fi
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          if [[ "$should_build" == false ]]; then echo "No new upstream commits; skipping macOS build."; fi
+
+  build:
+    needs: discover
+    if: needs.discover.outputs.should_build == 'true'
+    runs-on: macos-15-intel
+    timeout-minutes: 75
+    env:
+      UPSTREAM_SHA: ${{ needs.discover.outputs.upstream_sha }}
+      SHORT_SHA: ${{ needs.discover.outputs.short_sha }}
+    steps:
+      - name: Check out exact upstream commit
+        uses: actions/checkout@v7
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ env.UPSTREAM_SHA }}
+          fetch-depth: 1
+
+      - name: Set anonymous git identity
+        run: |
+          git config --global user.name "Anon-Nickname"
+          git config --global user.email "226156388+Anon-Nickname@users.noreply.github.com"
+
+      - name: Inject independent native updater override
+        env:
+          RELEASE_REPO: Anon-Nickname/hermes-intel-bleeding-edge
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          sha = os.environ['UPSTREAM_SHA']
+          repo = os.environ['RELEASE_REPO']
+          module = f'''import {{ app, ipcMain }} from 'electron'
+          import {{ execFile }} from 'node:child_process'
+          import {{ promisify }} from 'node:util'
+
+          const execFileAsync = promisify(execFile)
+          const releaseRepo = {repo!r}
+          const currentSha = {sha!r}
+
+          const githubHeaders = {{ Accept: 'application/vnd.github+json', 'User-Agent': 'Hermes-Intel-Updater' }}
+
+          async function githubJson(path: string) {{
+            const response = await fetch('https://api.github.com/' + path, {{ headers: githubHeaders }})
+            if (!response.ok) throw new Error('GitHub API request failed: ' + response.status)
+            return response.json()
+          }}
+
+          async function latestRelease() {{
+            return githubJson('repos/' + releaseRepo + '/releases/latest')
+          }}
+
+          function releaseSha(release: any): string | null {{
+            return /^Upstream-SHA: ([0-9a-f]{{40}})$/m.exec(release.body || '')?.[1] ?? null
+          }}
+
+          async function upstreamStatus() {{
+            const latest = await githubJson('repos/NousResearch/hermes-agent/commits/main')
+            const targetSha = typeof latest?.sha === 'string' ? latest.sha : null
+            if (!targetSha) throw new Error('Official main returned no commit SHA')
+            if (targetSha === currentSha) return {{ targetSha, behind: 0, commits: [] }}
+
+            try {{
+              const compared = await githubJson(
+                'repos/NousResearch/hermes-agent/compare/' + currentSha + '...' + targetSha
+              )
+              const behind = Number.isInteger(compared?.ahead_by) && compared.ahead_by >= 0
+                ? compared.ahead_by
+                : null
+              const commits = Array.isArray(compared?.commits)
+                ? compared.commits.slice().reverse().map((entry: any) => ({{
+                    sha: entry.sha,
+                    summary: String(entry.commit?.message || '').split('\\n')[0],
+                    author: String(entry.commit?.author?.name || ''),
+                    at: Date.parse(entry.commit?.committer?.date || '') || 0
+                  }}))
+                : []
+              return {{ targetSha, behind, commits }}
+            }} catch {{
+              return {{ targetSha, behind: null, commits: [] }}
+            }}
+          }}
+
+          export function installBleedingEdgeUpdater(): void {{
+            for (const channel of ['hermes:updates:check', 'hermes:updates:apply']) {{
+              try {{ ipcMain.removeHandler(channel) }} catch {{}}
+            }}
+
+            ipcMain.handle('hermes:updates:check', async () => {{
+              try {{
+                const upstream = await upstreamStatus()
+                return {{ supported: true, branch: 'official main', currentSha,
+                  targetSha: upstream.targetSha, behind: upstream.behind,
+                  commits: upstream.commits, updateAvailable: upstream.targetSha !== currentSha,
+                  fetchedAt: Date.now() }}
+              }} catch (error) {{
+                return {{ supported: true, branch: 'official main', currentSha, error: 'check-failed',
+                  message: error instanceof Error ? error.message : String(error), fetchedAt: Date.now() }}
+              }}
+            }})
+
+            ipcMain.handle('hermes:updates:apply', async () => {{
+              const release = await latestRelease()
+              const installableSha = releaseSha(release)
+              if (!installableSha || installableSha === currentSha) {{
+                throw new Error('No newer Intel build is available yet')
+              }}
+              const asset = release.assets?.find((item: any) => item.name.endsWith('-mac-x64.dmg'))
+              if (!asset?.browser_download_url) throw new Error('Latest release has no Intel macOS DMG')
+              const script = `set -euo pipefail
+          DMG_URL="$1"
+          TMP_DMG="/tmp/Hermes-intel-update.dmg"
+          MOUNT_POINT="$(mktemp -d /tmp/hermes-intel-mount.XXXXXX)"
+          curl -fL "$DMG_URL" -o "$TMP_DMG"
+          hdiutil attach "$TMP_DMG" -mountpoint "$MOUNT_POINT" -nobrowse
+          trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
+          rm -rf /Applications/Hermes.app
+          cp -R "$MOUNT_POINT/Hermes.app" /Applications/Hermes.app
+          xattr -dr com.apple.quarantine /Applications/Hermes.app
+          hdiutil detach "$MOUNT_POINT"
+          trap - EXIT`
+              await execFileAsync('/bin/bash', ['-c', script, 'hermes-intel-updater', asset.browser_download_url])
+              app.relaunch()
+              app.quit()
+              return {{ ok: true }}
+            }})
+          }}
+          '''
+          Path('apps/desktop/electron/bleeding-edge-updater.ts').write_text(module)
+          entry = Path('apps/desktop/electron/entry.ts')
+          text = entry.read_text()
+          text = text.replace("  await import('./main')", "  await import('./main')\n  const { installBleedingEdgeUpdater } = await import('./bleeding-edge-updater')\n  installBleedingEdgeUpdater()")
+          entry.write_text(text)
+          PY
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Stamp desktop package with canonical Hermes version
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          init_text = Path('hermes_cli/__init__.py').read_text()
+          match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
+          if not match:
+              raise SystemExit('Could not resolve canonical Hermes version')
+          version = match.group(1)
+
+          package_path = Path('apps/desktop/package.json')
+          package = json.loads(package_path.read_text())
+          package['version'] = version
+          package_path.write_text(json.dumps(package, indent=2) + '\n')
+
+          lock_path = Path('package-lock.json')
+          lock = json.loads(lock_path.read_text())
+          desktop_lock = lock.get('packages', {}).get('apps/desktop')
+          if not isinstance(desktop_lock, dict):
+              raise SystemExit('Desktop workspace missing from package-lock.json')
+          desktop_lock['version'] = version
+          lock_path.write_text(json.dumps(lock, indent=2) + '\n')
+
+          assert json.loads(package_path.read_text())['version'] == version
+          assert json.loads(lock_path.read_text())['packages']['apps/desktop']['version'] == version
+          print(f'Stamped desktop package version: {version}')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned x86_64 packages
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: env -u GITHUB_SHA -u GITHUB_REF_NAME npm run dist:mac -- --x64
+
+      - name: Validate, name and checksum artifacts
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          app_binary="$(find release -path '*/Hermes.app/Contents/MacOS/Hermes' -type f -print -quit)"
+          test -n "$app_binary"
+          file "$app_binary" | grep -q x86_64
+          if file "$app_binary" | grep -q arm64; then exit 1; fi
+          dmgs=(release/*-mac-x64.dmg); zips=(release/*-mac-x64.zip)
+          test ${#dmgs[@]} -eq 1; test ${#zips[@]} -eq 1
+          hdiutil verify "${dmgs[0]}"
+          mv "${dmgs[0]}" "release/Hermes-${SHORT_SHA}-mac-x64.dmg"
+          mv "${zips[0]}" "release/Hermes-${SHORT_SHA}-mac-x64.zip"
+          (cd release && shasum -a 256 "Hermes-${SHORT_SHA}-mac-x64.dmg" "Hermes-${SHORT_SHA}-mac-x64.zip" > SHA256SUMS.txt)
+
+      - name: Publish release
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release.md"
+          printf 'Upstream-SHA: %s\n\nUnofficial bleeding-edge Intel macOS build from [NousResearch/hermes-agent@%s](https://github.com/NousResearch/hermes-agent/commit/%s). Not signed or notarized by Apple. Includes the repository-disclosed updater override.\n' "$UPSTREAM_SHA" "$SHORT_SHA" "$UPSTREAM_SHA" > "$notes"
+          gh release create "bleeding-edge-$SHORT_SHA" \
+            "release/Hermes-${SHORT_SHA}-mac-x64.dmg" \
+            "release/Hermes-${SHORT_SHA}-mac-x64.zip" \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Hermes Intel bleeding edge - $SHORT_SHA" --notes-file "$notes" --latest
+
+
+  cooldown:
+    needs: [discover, build]
+    if: ${{ always() && needs.discover.outputs.should_build == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hold build concurrency for five minutes
+        run: sleep 300
