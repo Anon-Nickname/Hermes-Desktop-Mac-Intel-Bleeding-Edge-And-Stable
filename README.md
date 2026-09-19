@@ -1,40 +1,71 @@
-# Hermes Intel Bleeding Edge
+<div align="center">
 
-Automated unofficial `x86_64` macOS builds of [NousResearch/Hermes Agent](https://github.com/NousResearch/hermes-agent) from upstream `main`.
+# Hermes Desktop for Intel Mac
 
-> These builds may contain unfinished changes or regressions. They are not supported by Nous Research and are not signed or notarized by Apple.
+**Bleeding-edge `x86_64` builds of [NousResearch/Hermes Agent](https://github.com/NousResearch/hermes-agent), packaged automatically for Intel-based Macs.**
 
-## Download
+[![Upstream](https://img.shields.io/badge/upstream-NousResearch%2Fhermes--agent-111827?logo=github)](https://github.com/NousResearch/hermes-agent)
+[![Platform](https://img.shields.io/badge/macOS-Intel%20x86__64-111827?logo=apple)](#downloads)
+[![Channel](https://img.shields.io/badge/channel-bleeding%20edge-f97316)](#before-you-install)
+[![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/hermes-intel-bleeding-edge?display_name=tag&sort=semver)](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest)
 
-Download the latest DMG from [Releases](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest).
+[Download latest build](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) · [View build workflow](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/actions/workflows/build-intel-macos-release.yml) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
 
-Each release includes:
+</div>
 
-- an Intel macOS DMG and ZIP
-- SHA-256 checksums
-- the exact upstream commit SHA
+> [!WARNING]
+> These are unofficial development builds from upstream `main`. They may include unfinished changes or regressions, are not supported by Nous Research, and are **not signed or notarized by Apple**.
 
-## How it works
+## What this repository does
 
-The workflow checks upstream every 15 minutes. It builds only when `NousResearch/hermes-agent:main` has moved, never overlaps builds, and waits five minutes after a build before the next queued check. Releases are built from the exact upstream commit and verified as `x86_64` before publication.
+Every 15 minutes, the workflow checks the latest commit on `NousResearch/hermes-agent:main`.
 
-The packaged desktop version is stamped from upstream `hermes_cli/__init__.py`, so the client footer tracks the real Hermes version. The footer's `+N` count compares the packaged upstream SHA with official Hermes `main`. Installable updates still come only from this repository's Intel releases.
+- If that upstream commit already has a release here, the run exits without using a macOS runner.
+- If it is new, the workflow builds Intel macOS DMG and ZIP artifacts, verifies their `x86_64` architecture, records checksums, and publishes a release tied to the exact upstream commit.
+- Builds never overlap. A five-minute cooldown holds the queue after each build before the next check proceeds.
+
+| | |
+|---|---|
+| **Upstream** | `NousResearch/hermes-agent:main` |
+| **Target** | Intel macOS (`x86_64`) |
+| **Artifacts** | DMG, ZIP, SHA-256 checksums |
+| **Schedule** | Every 15 minutes; build only on change |
+| **Release channel** | Unofficial bleeding edge |
+
+## Downloads
+
+Get the current build from [**Latest release**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest). Each release identifies the exact upstream commit and includes SHA-256 checksums.
+
+> [!CAUTION]
+> Review the upstream commit and checksums before installing. Because the app is unsigned and not notarized, macOS may block the first launch. Only install it if you understand and accept the risks of an independent bleeding-edge build.
+
+## In-app updater
+
+The workflow injects an updater override into the Electron main process at build time. The client footer shows the packaged Hermes version and its commit distance from official upstream `main`. The native update action:
+
+1. checks this repository's latest release;
+2. downloads the Intel DMG only when a newer packaged upstream SHA exists;
+3. mounts it and replaces `/Applications/Hermes.app`;
+4. removes the quarantine attribute;
+5. detaches the image and relaunches Hermes.
+
+The updater force-overwrites the app and removes quarantine for this independent unsigned release channel. It can fail if the current user cannot write to `/Applications`, Hermes is running from another location, or GitHub or the network is unavailable. Inspect the workflow before relying on it.
 
 ## Changes from the original Intel rebuild
 
-This project began from the Intel macOS rebuild work by [evencj11](https://github.com/evencj11/hermes-agent-desktop-intel-mac-rebuild). Compared with that repository, this one adds:
+This standalone repository builds on the Intel macOS groundwork in [evencj11/hermes-agent-desktop-intel-mac-rebuild](https://github.com/evencj11/hermes-agent-desktop-intel-mac-rebuild). Compared with that project, this one adds:
 
-- unattended upstream polling and release publication
-- skip-when-unchanged builds, no overlap, and a five-minute cooldown
-- a native updater pointed at this repository's releases
-- upstream-main commit distance in the client footer
-- automatic stamping of the canonical Hermes version into packaged apps
-- artifact architecture checks and release checksums
+- unattended upstream polling and release publication;
+- skip-when-unchanged builds, no overlap, and a five-minute cooldown;
+- a native updater pointed at this repository's releases;
+- upstream-main commit distance in the client footer;
+- automatic stamping of the canonical Hermes version into packaged apps;
+- artifact architecture checks and release checksums.
 
-## Credits
+The automation and updater injection live in [`.github/workflows/build-intel-macos-release.yml`](.github/workflows/build-intel-macos-release.yml).
+
+## Credits and license
 
 Hermes Agent is developed by [NousResearch](https://github.com/NousResearch/hermes-agent). Intel macOS rebuild groundwork by [evencj11](https://github.com/evencj11/hermes-agent-desktop-intel-mac-rebuild).
 
-## License
-
-This repository's workflow and documentation are provided under the MIT License. Upstream Hermes Agent remains subject to its own license.
+The workflow and documentation in this repository are available under the [MIT License](LICENSE). Upstream Hermes Agent remains subject to its own license. This repository is not affiliated with or endorsed by Nous Research.
