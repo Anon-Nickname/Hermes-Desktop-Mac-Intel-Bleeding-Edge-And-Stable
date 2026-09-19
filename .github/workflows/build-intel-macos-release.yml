@@ -34,7 +34,9 @@ jobs:
           set -euo pipefail
           upstream_sha="$(gh api repos/NousResearch/hermes-agent/commits/main --jq .sha)"
           short_sha="${upstream_sha:0:12}"
-          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.body // ""' 2>/dev/null | sed -n 's/^Upstream-SHA: //p' | head -1 || true)"
+          # Badge-independent: the Latest badge is shared between tracks, so
+          # pick the newest bleeding-edge release by publish time instead.
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select((.draft|not) and (.prerelease|not) and (.tag_name | startswith("bleeding-edge-")))] | sort_by(.published_at) | reverse | .[0].body // ""' 2>/dev/null | sed -n 's/^Upstream-SHA: //p' | head -1 || true)"
           should_build=false
           if [[ "$FORCE" == "true" || "$upstream_sha" != "$latest_sha" ]]; then should_build=true; fi
           echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
@@ -79,6 +81,9 @@ jobs:
 
       - name: Patch update dialog with track picker
         run: python3 pipeline/updater/patch-updates-overlay.py
+
+      - name: Patch About settings with update entry and track picker
+        run: python3 pipeline/updater/patch-about-settings.py
 
       - uses: actions/setup-node@v7
         with:
