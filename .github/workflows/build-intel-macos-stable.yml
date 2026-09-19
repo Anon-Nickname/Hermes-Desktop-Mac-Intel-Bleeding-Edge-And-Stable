@@ -1,0 +1,178 @@
+name: Build Intel macOS stable
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Build even if this upstream tagged release is already published here"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: intel-macos-stable
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      upstream_sha: ${{ steps.check.outputs.upstream_sha }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+      upstream_tag: ${{ steps.check.outputs.upstream_tag }}
+    steps:
+      - id: check
+        name: Compare upstream latest tagged release with latest own stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rebuild }}
+        run: |
+          set -euo pipefail
+          upstream_tag="$(gh api repos/NousResearch/hermes-agent/releases/latest --jq .tag_name)"
+          ref_json="$(gh api "repos/NousResearch/hermes-agent/git/refs/tags/$upstream_tag")"
+          ref_type="$(jq -r .object.type <<<"$ref_json")"
+          ref_sha="$(jq -r .object.sha <<<"$ref_json")"
+          # Upstream tags are annotated; peel the tag object to its commit.
+          if [[ "$ref_type" == "tag" ]]; then
+            upstream_sha="$(gh api "repos/NousResearch/hermes-agent/git/tags/$ref_sha" --jq .object.sha)"
+          else
+            upstream_sha="$ref_sha"
+          fi
+          short_sha="${upstream_sha:0:12}"
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select(.tag_name | startswith("stable-"))][0].body // ""' 2>/dev/null | sed -n 's/^Upstream-SHA: //p' | head -1 || true)"
+          should_build=false
+          if [[ "$FORCE" == "true" || -z "$latest_sha" || "$upstream_sha" != "$latest_sha" ]]; then should_build=true; fi
+          echo "upstream_tag=$upstream_tag" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          if [[ "$should_build" == false ]]; then echo "Latest upstream release $upstream_tag already published; skipping macOS build."; fi
+
+  build:
+    needs: discover
+    if: needs.discover.outputs.should_build == 'true'
+    runs-on: macos-15-intel
+    timeout-minutes: 75
+    env:
+      UPSTREAM_SHA: ${{ needs.discover.outputs.upstream_sha }}
+      SHORT_SHA: ${{ needs.discover.outputs.short_sha }}
+      UPSTREAM_TAG: ${{ needs.discover.outputs.upstream_tag }}
+      TRACK: stable
+      ARTIFACT_BASENAME: Hermes-stable-${{ needs.discover.outputs.upstream_tag }}
+      RELEASE_TAG: stable-${{ needs.discover.outputs.upstream_tag }}
+      RELEASE_TITLE: Hermes Intel stable - ${{ needs.discover.outputs.upstream_tag }}
+    steps:
+      - name: Check out exact upstream release commit
+        uses: actions/checkout@v7
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ env.UPSTREAM_SHA }}
+          fetch-depth: 1
+
+      - name: Check out this repository's pipeline files
+        uses: actions/checkout@v7
+        with:
+          path: pipeline
+
+      - name: Set anonymous git identity
+        run: |
+          git config --global user.name "Anon-Nickname"
+          git config --global user.email "226156388+Anon-Nickname@users.noreply.github.com"
+
+      - name: Inject independent native updater override
+        env:
+          RELEASE_REPO: Anon-Nickname/hermes-intel-bleeding-edge
+        run: python3 pipeline/updater/inject.py
+
+      - name: Patch update dialog with track picker
+        run: python3 pipeline/updater/patch-updates-overlay.py
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Stamp desktop package with canonical Hermes version
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          init_text = Path('hermes_cli/__init__.py').read_text()
+          match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
+          if not match:
+              raise SystemExit('Could not resolve canonical Hermes version')
+          version = match.group(1)
+
+          package_path = Path('apps/desktop/package.json')
+          package = json.loads(package_path.read_text())
+          package['version'] = version
+          package_path.write_text(json.dumps(package, indent=2) + '\n')
+
+          lock_path = Path('package-lock.json')
+          lock = json.loads(lock_path.read_text())
+          desktop_lock = lock.get('packages', {}).get('apps/desktop')
+          if not isinstance(desktop_lock, dict):
+              raise SystemExit('Desktop workspace missing from package-lock.json')
+          desktop_lock['version'] = version
+          lock_path.write_text(json.dumps(lock, indent=2) + '\n')
+
+          assert json.loads(package_path.read_text())['version'] == version
+          assert json.loads(lock_path.read_text())['packages']['apps/desktop']['version'] == version
+          print(f'Stamped desktop package version: {version}')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned x86_64 packages
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: env -u GITHUB_SHA -u GITHUB_REF_NAME npm run dist:mac -- --x64
+
+      - name: Validate, name and checksum artifacts
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          app_binary="$(find release -path '*/Hermes.app/Contents/MacOS/Hermes' -type f -print -quit)"
+          test -n "$app_binary"
+          file "$app_binary" | grep -q x86_64
+          if file "$app_binary" | grep -q arm64; then exit 1; fi
+          dmgs=(release/*-mac-x64.dmg); zips=(release/*-mac-x64.zip)
+          test ${#dmgs[@]} -eq 1; test ${#zips[@]} -eq 1
+          hdiutil verify "${dmgs[0]}"
+          mv "${dmgs[0]}" "release/${ARTIFACT_BASENAME}-mac-x64.dmg"
+          mv "${zips[0]}" "release/${ARTIFACT_BASENAME}-mac-x64.zip"
+          (cd release && shasum -a 256 "${ARTIFACT_BASENAME}-mac-x64.dmg" "${ARTIFACT_BASENAME}-mac-x64.zip" > SHA256SUMS.txt)
+
+      - name: Publish release
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release.md"
+          printf 'Upstream-SHA: %s\nUpstream-Tag: %s\nTrack: %s\n\nUnofficial stable Intel macOS build from [NousResearch/hermes-agent %s](https://github.com/NousResearch/hermes-agent/releases/tag/%s). Not signed or notarized by Apple. Includes the repository-disclosed updater override.\n' "$UPSTREAM_SHA" "$UPSTREAM_TAG" "$TRACK" "$UPSTREAM_TAG" "$UPSTREAM_TAG" > "$notes"
+          gh release create "$RELEASE_TAG" \
+            "release/${ARTIFACT_BASENAME}-mac-x64.dmg" \
+            "release/${ARTIFACT_BASENAME}-mac-x64.zip" \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" --notes-file "$notes"
+
+  cooldown:
+    needs: [discover, build]
+    if: ${{ always() && needs.discover.outputs.should_build == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hold build concurrency for five minutes
+        run: sleep 300
