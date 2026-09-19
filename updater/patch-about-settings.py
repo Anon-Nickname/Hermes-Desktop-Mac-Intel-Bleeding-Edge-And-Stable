@@ -121,6 +121,12 @@ replace_once(
     '          </div>',
 )
 
+# 5. Surface the informational upstream distance in the About track line.
+replace_once(
+    "          hint={a.branchCommit(status?.branch ?? 'unknown', status?.currentSha?.slice(0, 7) ?? 'unknown')}",
+    "          hint={a.branchCommit(status?.branch ?? 'unknown', status?.currentSha?.slice(0, 7) ?? 'unknown') + ((status?.upstreamBehind ?? 0) > 0 ? ' - ' + status.upstreamBehind + ' commits behind upstream main' : '')}",
+)
+
 target.write_text(text)
 print('Patched about-settings.tsx with update entry point and track picker')
 
