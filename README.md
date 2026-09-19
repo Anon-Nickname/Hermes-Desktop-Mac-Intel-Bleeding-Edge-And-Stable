@@ -36,7 +36,7 @@ Pick one track - you can change it later in the app:
 | Track | Direct download (Intel DMG) | Release page |
 |---|---|---|
 | **Bleeding edge** - newest upstream `main` | **[⬇ Hermes-bleeding-edge-mac-x64.dmg](../../releases/latest/download/Hermes-bleeding-edge-mac-x64.dmg)** | [Latest release](../../releases/latest) (always carries the Latest badge) |
-| **Stable** - newest tagged upstream release | **[⬇ Hermes-stable-v2026.9.14-mac-x64.dmg](../../releases/download/stable-v2026.9.14/Hermes-stable-v2026.9.14-mac-x64.dmg)** | [stable-v2026.9.14](../../releases/tag/stable-v2026.9.14) |
+| **Stable** - newest tagged upstream release | **[⬇ Hermes-stable-v2026.9.14-mac-x64.dmg](../../releases/download/stable-v2026.9.14/Hermes-stable-mac-x64.dmg)** | [stable-v2026.9.14](../../releases/tag/stable-v2026.9.14) |
 
 Both links download the `-mac-x64.dmg` for an Intel Mac directly - no hunting through asset lists. The bleeding-edge link is permanent: it always serves the newest bleeding-edge build. The stable link is updated automatically every time a new stable build is published.
 
