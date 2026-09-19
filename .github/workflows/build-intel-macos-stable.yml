@@ -63,7 +63,6 @@ jobs:
       SHORT_SHA: ${{ needs.discover.outputs.short_sha }}
       UPSTREAM_TAG: ${{ needs.discover.outputs.upstream_tag }}
       TRACK: stable
-      ARTIFACT_BASENAME: Hermes-stable-${{ needs.discover.outputs.upstream_tag }}
       RELEASE_TAG: stable-${{ needs.discover.outputs.upstream_tag }}
       RELEASE_TITLE: Hermes Intel stable - ${{ needs.discover.outputs.upstream_tag }}
     steps:
@@ -152,9 +151,9 @@ jobs:
           dmgs=(release/*-mac-x64.dmg); zips=(release/*-mac-x64.zip)
           test ${#dmgs[@]} -eq 1; test ${#zips[@]} -eq 1
           hdiutil verify "${dmgs[0]}"
-          mv "${dmgs[0]}" "release/${ARTIFACT_BASENAME}-mac-x64.dmg"
-          mv "${zips[0]}" "release/${ARTIFACT_BASENAME}-mac-x64.zip"
-          (cd release && shasum -a 256 "${ARTIFACT_BASENAME}-mac-x64.dmg" "${ARTIFACT_BASENAME}-mac-x64.zip" > SHA256SUMS.txt)
+          mv "${dmgs[0]}" "release/Hermes-stable-mac-x64.dmg"
+          mv "${zips[0]}" "release/Hermes-stable-mac-x64.zip"
+          (cd release && shasum -a 256 Hermes-stable-mac-x64.dmg Hermes-stable-mac-x64.zip > SHA256SUMS.txt)
 
       - name: Publish release
         working-directory: apps/desktop
@@ -170,8 +169,8 @@ jobs:
             gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi
           gh release create "$RELEASE_TAG" \
-            "release/${ARTIFACT_BASENAME}-mac-x64.dmg" \
-            "release/${ARTIFACT_BASENAME}-mac-x64.zip" \
+            "release/Hermes-stable-mac-x64.dmg" \
+            "release/Hermes-stable-mac-x64.zip" \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE" --notes-file "$notes" --latest=false
@@ -194,7 +193,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
-          ARTIFACT_BASENAME: ${{ env.ARTIFACT_BASENAME }}
         run: |
           set -euo pipefail
           # The README carries a direct DMG link for the stable track; point it
@@ -202,7 +200,7 @@ jobs:
           # for a non-Latest release, so the link is updated here.
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" readme-repo
           cd readme-repo
-          new_path="releases/download/${RELEASE_TAG}/${ARTIFACT_BASENAME}-mac-x64.dmg"
+          new_path="releases/download/${RELEASE_TAG}/Hermes-stable-mac-x64.dmg"
           perl -pi -e "s#releases/download/stable-\S+?\.dmg#${new_path}#" README.md
           if git diff --quiet README.md; then
             echo "README already up to date"
