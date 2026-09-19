@@ -33,12 +33,14 @@ The DMG you install decides the starting track: a bleeding-edge DMG starts on bl
 
 Pick one track - you can change it later in the app:
 
-| Track | Where to download | Notes |
+| Track | Direct download (Intel DMG) | Release page |
 |---|---|---|
-| **Bleeding edge** | the [**Latest release**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) | The Latest badge always belongs to this track. Tag format: `bleeding-edge-<sha>` |
-| **Stable** | newest `stable-*` tag under [**All releases**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases) | Never carries the Latest badge, by design. Tag format: `stable-<version>` |
+| **Bleeding edge** - newest upstream `main` | **[⬇ Hermes-bleeding-edge-mac-x64.dmg](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest/download/Hermes-bleeding-edge-mac-x64.dmg)** | [Latest release](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) (always carries the Latest badge) |
+| **Stable** - newest tagged upstream release | **[⬇ Hermes-stable-v2026.9.14-mac-x64.dmg](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/download/stable-v2026.9.14/Hermes-stable-v2026.9.14-mac-x64.dmg)** | [stable-v2026.9.14](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/tag/stable-v2026.9.14) |
 
-Grab the `-mac-x64.dmg` asset. Each release names the exact upstream commit it was built from and includes SHA-256 checksums. The footer in the app shows your build's version and its commit distance from the track you follow.
+Both links download the `-mac-x64.dmg` for an Intel Mac directly - no hunting through asset lists. The bleeding-edge link is permanent: it always serves the newest bleeding-edge build. The stable link is updated automatically every time a new stable build is published.
+
+Every release also offers a ZIP and a `SHA256SUMS.txt` checksum file, and names the exact upstream commit it was built from. The footer in the app shows your build's version and its commit distance from the track you follow.
 
 > [!CAUTION]
 > Review the upstream commit or tag and the checksums before installing. Because the app is unsigned and not notarized, macOS may block the first launch. Only install if you understand and accept the risks of an independent build.
