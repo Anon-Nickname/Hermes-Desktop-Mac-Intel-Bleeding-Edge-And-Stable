@@ -161,6 +161,11 @@ jobs:
           set -euo pipefail
           notes="$RUNNER_TEMP/release.md"
           printf 'Upstream-SHA: %s\nUpstream-Tag: %s\nTrack: %s\n\nUnofficial stable Intel macOS build from [NousResearch/hermes-agent %s](https://github.com/NousResearch/hermes-agent/releases/tag/%s). Not signed or notarized by Apple. Includes the repository-disclosed updater override.\n' "$UPSTREAM_SHA" "$UPSTREAM_TAG" "$TRACK" "$UPSTREAM_TAG" "$UPSTREAM_TAG" > "$notes"
+          # A force rebuild of an already-published upstream tag recreates
+          # the release from scratch.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
           gh release create "$RELEASE_TAG" \
             "release/${ARTIFACT_BASENAME}-mac-x64.dmg" \
             "release/${ARTIFACT_BASENAME}-mac-x64.zip" \
@@ -180,6 +185,30 @@ jobs:
           if [[ -n "$latest_bleeding" ]]; then
             gh release edit "$latest_bleeding" --repo "$GITHUB_REPOSITORY" --latest
           fi
+
+
+      - name: Update stable download link in README
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          ARTIFACT_BASENAME: ${{ env.ARTIFACT_BASENAME }}
+        run: |
+          set -euo pipefail
+          # The README carries a direct DMG link for the stable track; point it
+          # at the release just published. GitHub has no "latest" URL shortcut
+          # for a non-Latest release, so the link is updated here.
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" readme-repo
+          cd readme-repo
+          new_path="releases/download/${RELEASE_TAG}/${ARTIFACT_BASENAME}-mac-x64.dmg"
+          perl -pi -e "s#releases/download/stable-\S+?\.dmg#${new_path}#" README.md
+          if git diff --quiet README.md; then
+            echo "README already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update stable download link to ${RELEASE_TAG}"
+          git push
 
   cooldown:
     needs: [discover, build]
