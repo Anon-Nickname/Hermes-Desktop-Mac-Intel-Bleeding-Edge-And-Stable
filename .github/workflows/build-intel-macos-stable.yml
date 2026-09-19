@@ -168,6 +168,19 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE" --notes-file "$notes" --latest=false
 
+      - name: Restore Latest badge to bleeding edge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Stable tags outrank bleeding tags on semver, so GitHub's automatic
+          # latest-release heuristic would hand this release the badge. The
+          # badge belongs to the bleeding-edge track by design.
+          latest_bleeding="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq '[.[] | select(.prerelease == false and .draft == false and (.tag_name | startswith("bleeding-edge-")))][0].tag_name // ""')"
+          if [[ -n "$latest_bleeding" ]]; then
+            gh release edit "$latest_bleeding" --repo "$GITHUB_REPOSITORY" --latest
+          fi
+
   cooldown:
     needs: [discover, build]
     if: ${{ always() && needs.discover.outputs.should_build == 'true' }}
