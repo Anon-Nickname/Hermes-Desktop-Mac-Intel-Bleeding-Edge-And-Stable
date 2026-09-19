@@ -2,70 +2,95 @@
 
 # Hermes Desktop for Intel Mac
 
-**Bleeding-edge `x86_64` builds of [NousResearch/Hermes Agent](https://github.com/NousResearch/hermes-agent), packaged automatically for Intel-based Macs.**
+**`x86_64` builds of [NousResearch/Hermes Agent](https://github.com/NousResearch/hermes-agent), packaged automatically for Intel-based Macs - bleeding-edge from every upstream commit, or stable from tagged releases.**
 
 [![Upstream](https://img.shields.io/badge/upstream-NousResearch%2Fhermes--agent-111827?logo=github)](https://github.com/NousResearch/hermes-agent)
 [![Platform](https://img.shields.io/badge/macOS-Intel%20x86__64-111827?logo=apple)](#downloads)
-[![Channel](https://img.shields.io/badge/channel-bleeding%20edge-f97316)](#before-you-install)
+[![Tracks](https://img.shields.io/badge/tracks-bleeding%20edge%20%2B%20stable-f97316)](#update-tracks)
 [![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/hermes-intel-bleeding-edge?display_name=tag&sort=semver)](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest)
 
-[Download latest build](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) · [View build workflow](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/actions/workflows/build-intel-macos-release.yml) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
+[Download latest build](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) · [All releases](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
 
 </div>
 
 > [!WARNING]
-> These are unofficial development builds from upstream `main`. They may include unfinished changes or regressions, are not supported by Nous Research, and are **not signed or notarized by Apple**.
+> These are unofficial builds, not supported by Nous Research, and **not signed or notarized by Apple**. The bleeding-edge track builds upstream `main`, which may include unfinished changes or regressions. Use the stable track if you want tagged-release quality.
 
-## What this repository does
+## Update tracks
 
-Every 15 minutes, the workflow checks the latest commit on `NousResearch/hermes-agent:main`.
+This repository publishes two tracks of the same app. The **only** difference between them is what they are built from:
 
-- If that upstream commit already has a release here, the run exits without using a macOS runner.
-- If it is new, the workflow builds Intel macOS DMG and ZIP artifacts, verifies their `x86_64` architecture, records checksums, and publishes a release tied to the exact upstream commit.
-- Builds never overlap. A five-minute cooldown holds the queue after each build before the next check proceeds.
+| | Bleeding edge | Stable |
+|---|---|---|
+| **Built from** | latest commit on upstream `main` | latest tagged upstream release (e.g. `v2026.9.14`) |
+| **Checked for** | every 15 minutes | hourly |
+| **Release tags** | `bleeding-edge-<sha>` | `stable-<version>` |
+| **Upstream cadence** | many commits per day | roughly one tag per week |
 
-| | |
-|---|---|
-| **Upstream** | `NousResearch/hermes-agent:main` |
-| **Target** | Intel macOS (`x86_64`) |
-| **Artifacts** | DMG, ZIP, SHA-256 checksums |
-| **Schedule** | Every 15 minutes; build only on change |
-| **Release channel** | Unofficial bleeding edge |
+The DMG you install decides the starting track: a bleeding-edge DMG starts on bleeding edge, a stable DMG starts on stable. You can switch at any time inside the app - see below.
+
+## Switching tracks in the app
+
+Open the update dialog (the update button in the app footer, or **Settings - About - Check now**). A track picker at the top of the dialog offers **Bleeding edge** and **Stable**:
+
+- Switching re-checks updates against that track immediately.
+- **Install** then downloads that track's latest build from this repository, so you can move between tracks in either direction without reinstalling.
+- Your choice is remembered across restarts.
+
+**Config-file fallback:** if the picker is ever unavailable, the track is stored in `~/Library/Application Support/Hermes/update-channel.json`:
+
+```json
+{ "channel": "stable" }
+```
+
+Valid values are `"bleeding-edge"` and `"stable"`. Quit the app, edit the file, and relaunch. If the file is missing, the app recreates it from the build's own track on first launch - it never overwrites a choice you made.
 
 ## Downloads
 
-Get the current build from [**Latest release**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest). Each release identifies the exact upstream commit and includes SHA-256 checksums.
+- **Bleeding edge:** always the [**Latest release**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest).
+- **Stable:** the newest `stable-*` tag under [**All releases**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases).
+
+Each release names the exact upstream commit it was built from and includes SHA-256 checksums. The footer in the app shows your build's version and its commit distance from the track you follow.
 
 > [!CAUTION]
-> Review the upstream commit and checksums before installing. Because the app is unsigned and not notarized, macOS may block the first launch. Only install it if you understand and accept the risks of an independent bleeding-edge build.
+> Review the upstream commit or tag and the checksums before installing. Because the app is unsigned and not notarized, macOS may block the first launch. Only install if you understand and accept the risks of an independent build.
+
+## How the pipeline works
+
+Two workflows, one per track, sharing the same build steps:
+
+- A lightweight check compares upstream (`main` HEAD or the latest tag) with the newest release here on that track. If nothing changed, the run exits without using a macOS runner.
+- On change, an Intel runner builds DMG and ZIP artifacts from the exact upstream commit, verifies the `x86_64` architecture, stamps the canonical Hermes version into the app, records checksums, and publishes the release under the track's tag namespace.
+- Builds never overlap. A five-minute cooldown holds the queue after each build.
 
 ## In-app updater
 
-The workflow injects an updater override into the Electron main process at build time. The client footer shows the packaged Hermes version and its commit distance from official upstream `main`. The native update action:
+The workflow injects an updater override into the Electron main process at build time ([`updater/`](updater)). For the active track it:
 
-1. checks this repository's latest release;
-2. downloads the Intel DMG only when a newer packaged upstream SHA exists;
+1. checks this repository's releases for the track's latest build;
+2. downloads the Intel DMG only when it packages a different upstream SHA;
 3. mounts it and replaces `/Applications/Hermes.app`;
 4. removes the quarantine attribute;
 5. detaches the image and relaunches Hermes.
 
-The updater force-overwrites the app and removes quarantine for this independent unsigned release channel. It can fail if the current user cannot write to `/Applications`, Hermes is running from another location, or GitHub or the network is unavailable. Inspect the workflow before relying on it.
+The updater force-overwrites the app and removes quarantine for this independent unsigned release channel. It can fail if the current user cannot write to `/Applications`, Hermes is running from another location, or GitHub or the network is unavailable. Inspect the workflows before relying on it.
 
 ## Changes from the original Intel rebuild
 
 This standalone repository builds on the Intel macOS groundwork in [evencj11/hermes-agent-desktop-intel-mac-rebuild](https://github.com/evencj11/hermes-agent-desktop-intel-mac-rebuild). Compared with that project, this one adds:
 
-- unattended upstream polling and release publication;
+- two update tracks (bleeding-edge and stable) with in-app track switching;
+- unattended upstream polling and release publication per track;
 - skip-when-unchanged builds, no overlap, and a five-minute cooldown;
 - a native updater pointed at this repository's releases;
-- upstream-main commit distance in the client footer;
+- upstream commit distance in the client footer, relative to the active track;
 - automatic stamping of the canonical Hermes version into packaged apps;
 - artifact architecture checks and release checksums.
 
-The automation and updater injection live in [`.github/workflows/build-intel-macos-release.yml`](.github/workflows/build-intel-macos-release.yml).
+The automation lives in [`.github/workflows/`](.github/workflows) and [`updater/`](updater).
 
 ## Credits and license
 
 Hermes Agent is developed by [NousResearch](https://github.com/NousResearch/hermes-agent). Intel macOS rebuild groundwork by [evencj11](https://github.com/evencj11/hermes-agent-desktop-intel-mac-rebuild).
 
-The workflow and documentation in this repository are available under the [MIT License](LICENSE). Upstream Hermes Agent remains subject to its own license. This repository is not affiliated with or endorsed by Nous Research.
+The workflows and documentation in this repository are available under the [MIT License](LICENSE). Upstream Hermes Agent remains subject to its own license. This repository is not affiliated with or endorsed by Nous Research.
