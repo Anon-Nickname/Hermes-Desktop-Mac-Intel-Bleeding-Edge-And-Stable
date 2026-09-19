@@ -13,9 +13,16 @@ import { promisify } from 'node:util'
  * channel below; the active channel is a user setting and can always be
  * changed in the app's update dialog.
  *
+ * Update decisions compare build identity only: the running build's baked
+ * upstream commit against the newest PUBLISHED build on this track. Upstream
+ * main and upstream tags are never consulted, so a fast-moving upstream can
+ * never produce a permanent false "N commits behind" offer, and an update is
+ * offered exactly when a newer build exists to install. The compare API
+ * doubles as the changelog source: the commits between the two builds.
+ *
  * All GitHub API calls are unauthenticated (60 requests/hour per IP), so
- * checks are kept to two calls, cached for ten minutes, and fall back to
- * the last successful check when the API is unavailable. A rate-limit 403
+ * checks are kept to at most two calls, cached for ten minutes, and fall back
+ * to the last successful check when the API is unavailable. A rate-limit 403
  * is reported to the dialog as what it is, with the reset time.
  *
  * updater/inject.py substitutes the __PLACEHOLDER__ values during the build.
@@ -83,58 +90,81 @@ async function githubJson(apiPath: string) {
       const minutes = reset > Date.now() ? Math.max(1, Math.round((reset - Date.now()) / 60000)) : null
       throw new GitHubRateLimitError(minutes)
     }
-    throw new Error('GitHub API request failed: ' + response.status)
+    throw Object.assign(new Error('GitHub API request failed: ' + response.status), { httpStatus: response.status })
   }
   return response.json()
-}
-
-// Latest own release on the given track. /releases/latest only ever names one
-// release, so both tracks filter the release list by tag prefix instead.
-async function latestOwnRelease(channel: UpdateChannel) {
-  const releases = await githubJson('repos/' + releaseRepo + '/releases?per_page=50')
-  if (!Array.isArray(releases)) throw new Error('Unexpected releases response')
-  const match = releases.find(
-    (release: any) =>
-      !release?.draft &&
-      !release?.prerelease &&
-      typeof release?.tag_name === 'string' &&
-      release.tag_name.startsWith(channel + '-')
-  )
-  if (!match) throw new Error('No ' + channel + ' build has been published yet')
-  return match
 }
 
 function releaseSha(release: any): string | null {
   return /^Upstream-SHA: ([0-9a-f]{40})$/m.exec(release.body || '')?.[1] ?? null
 }
 
-// Two API calls per check: the stable track resolves the latest upstream tag,
-// then one compare covers distance and changelog for both tracks. The compare
-// API accepts a tag as head, so annotated tags never need peeling here.
-async function upstreamStatus(channel: UpdateChannel) {
-  let compareRef: string
-  if (channel === 'stable') {
-    const latest = await githubJson('repos/NousResearch/hermes-agent/releases/latest')
-    const tag = typeof latest?.tag_name === 'string' ? latest.tag_name : null
-    if (!tag) throw new Error('Official latest release returned no tag')
-    compareRef = tag
-  } else {
-    compareRef = 'main'
+// Newest published own release on the given track. The release list comes
+// back in creation order, not upstream-commit order (a recreated release
+// scrambles it), so the newest published_at wins instead of the first list
+// entry. Releases without a parseable Upstream-SHA predate the
+// identity-in-notes convention and cannot be identity-compared, so they are
+// ignored. /releases/latest is never used: the Latest badge is shared
+// between both tracks and says nothing about either track's newest build.
+async function latestOwnRelease(channel: UpdateChannel) {
+  const releases = await githubJson('repos/' + releaseRepo + '/releases?per_page=50')
+  if (!Array.isArray(releases)) throw new Error('Unexpected releases response')
+  const candidates = releases.filter(
+    (release: any) =>
+      !release?.draft &&
+      !release?.prerelease &&
+      typeof release?.tag_name === 'string' &&
+      release.tag_name.startsWith(channel + '-') &&
+      typeof release?.published_at === 'string' &&
+      releaseSha(release) !== null
+  )
+  if (candidates.length === 0) throw new Error('No ' + channel + ' build has been published yet')
+  candidates.sort((a: any, b: any) => Date.parse(b.published_at) - Date.parse(a.published_at))
+  return candidates[0]
+}
+
+// The update decision, one compare call at most. Every state of the running
+// build relative to the newest published build is handled explicitly:
+// - identical: nothing to offer.
+// - ahead: the published build is newer - offer it, with the real distance
+//   and the commits between the two builds as the changelog.
+// - behind: the running build is newer than anything published yet (the
+//   pipeline is still building the next one) - nothing to offer.
+// - diverged or 404: upstream history no longer contains the running build's
+//   commit (rewrite or shallow oddity), so ordering is unknowable - offer
+//   the newest build to get back onto the track, with no invented count.
+async function releaseStatus(channel: UpdateChannel) {
+  const release = await latestOwnRelease(channel)
+  const targetSha = releaseSha(release) as string
+  const upToDate = { targetSha, behind: 0 as number | null, commits: [] as any[], updateAvailable: false }
+  if (targetSha === currentSha) return upToDate
+
+  let compared: any
+  try {
+    compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + currentSha + '...' + targetSha)
+  } catch (error) {
+    if ((error as { httpStatus?: number })?.httpStatus === 404) {
+      return { targetSha, behind: null, commits: [], updateAvailable: true }
+    }
+    throw error
   }
 
-  const compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + currentSha + '...' + compareRef)
-  if (compared?.status === 'identical') return { targetSha: currentSha, behind: 0, commits: [] }
-
-  const behind = Number.isInteger(compared?.ahead_by) && compared.ahead_by >= 0 ? compared.ahead_by : null
-  const commits = Array.isArray(compared?.commits)
-    ? compared.commits.slice().reverse().map((entry: any) => ({
-        sha: entry.sha,
-        summary: String(entry.commit?.message || '').split('\n')[0],
-        author: String(entry.commit?.author?.name || ''),
-        at: Date.parse(entry.commit?.committer?.date || '') || 0
-      }))
-    : []
-  return { targetSha: compareRef, behind, commits }
+  const status = compared?.status
+  if (status === 'identical') return upToDate
+  if (status === 'behind') return upToDate
+  if (status === 'ahead') {
+    const behind = Number.isInteger(compared?.ahead_by) && compared.ahead_by >= 0 ? compared.ahead_by : null
+    const commits = Array.isArray(compared?.commits)
+      ? compared.commits.slice().reverse().map((entry: any) => ({
+          sha: entry.sha,
+          summary: String(entry.commit?.message || '').split('\n')[0],
+          author: String(entry.commit?.author?.name || ''),
+          at: Date.parse(entry.commit?.committer?.date || '') || 0
+        }))
+      : []
+    return { targetSha, behind, commits, updateAvailable: true }
+  }
+  return { targetSha, behind: null, commits: [], updateAvailable: true }
 }
 
 async function readCheckCache(channel: UpdateChannel): Promise<any | null> {
@@ -169,15 +199,15 @@ export function installBleedingEdgeUpdater(): void {
       return cached.status
     }
     try {
-      const upstream = await upstreamStatus(channel)
+      const release = await releaseStatus(channel)
       const status = {
         supported: true,
         branch: channel,
         currentSha,
-        targetSha: upstream.targetSha,
-        behind: upstream.behind,
-        commits: upstream.commits,
-        updateAvailable: upstream.targetSha !== currentSha,
+        targetSha: release.targetSha,
+        behind: release.behind,
+        commits: release.commits,
+        updateAvailable: release.updateAvailable,
         fetchedAt: Date.now()
       }
       await writeCheckCache(channel, status)
