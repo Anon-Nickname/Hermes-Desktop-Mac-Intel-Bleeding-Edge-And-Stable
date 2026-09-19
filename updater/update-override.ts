@@ -236,4 +236,4 @@ trap - EXIT`
     await writeJsonAtomic('update-channel.json', { channel })
     return { branch: channel }
   })
-      }
+}
