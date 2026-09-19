@@ -13,6 +13,11 @@ import { promisify } from 'node:util'
  * channel below; the active channel is a user setting and can always be
  * changed in the app's update dialog.
  *
+ * All GitHub API calls are unauthenticated (60 requests/hour per IP), so
+ * checks are kept to two calls, cached for ten minutes, and fall back to
+ * the last successful check when the API is unavailable. A rate-limit 403
+ * is reported to the dialog as what it is, with the reset time.
+ *
  * updater/inject.py substitutes the __PLACEHOLDER__ values during the build.
  */
 
@@ -25,35 +30,61 @@ const releaseRepo = '__RELEASE_REPO__'
 const currentSha = '__CURRENT_SHA__'
 const defaultChannel: UpdateChannel = '__DEFAULT_CHANNEL__' as UpdateChannel
 
+const CHECK_CACHE_TTL_MS = 10 * 60 * 1000
+
 const githubHeaders = { Accept: 'application/vnd.github+json', 'User-Agent': 'Hermes-Intel-Updater' }
 
-function channelConfigPath(): string {
-  return path.join(app.getPath('userData'), 'update-channel.json')
+function userDataFile(name: string): string {
+  return path.join(app.getPath('userData'), name)
 }
 
-async function writeChannel(channel: UpdateChannel): Promise<void> {
-  const target = channelConfigPath()
+async function writeJsonAtomic(name: string, value: unknown): Promise<void> {
+  const target = userDataFile(name)
   await fs.mkdir(path.dirname(target), { recursive: true })
   const tmp = `${target}.tmp`
-  await fs.writeFile(tmp, JSON.stringify({ channel }, null, 2))
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2))
   await fs.rename(tmp, target)
+}
+
+async function readJson(name: string): Promise<any | null> {
+  try {
+    return JSON.parse(await fs.readFile(userDataFile(name), 'utf8'))
+  } catch {
+    return null
+  }
 }
 
 // The active channel lives in update-channel.json. The file is seeded once
 // from this build's baked default; after that it belongs to the user and is
 // never overwritten by the app - only by the in-app track picker.
 async function readChannel(): Promise<UpdateChannel> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(channelConfigPath(), 'utf8'))
-    if ((channels as readonly string[]).includes(parsed?.channel)) return parsed.channel as UpdateChannel
-  } catch {}
-  await writeChannel(defaultChannel)
+  const parsed = await readJson('update-channel.json')
+  if ((channels as readonly string[]).includes(parsed?.channel)) return parsed.channel as UpdateChannel
+  await writeJsonAtomic('update-channel.json', { channel: defaultChannel })
   return defaultChannel
+}
+
+class GitHubRateLimitError extends Error {
+  retryInMinutes: number | null
+  constructor(retryInMinutes: number | null) {
+    super(
+      'GitHub API rate limit reached (unauthenticated requests are limited to 60/hour).' +
+        (retryInMinutes ? ` Try again in about ${retryInMinutes} minute${retryInMinutes === 1 ? '' : 's'}.` : ' Try again later.')
+    )
+    this.retryInMinutes = retryInMinutes
+  }
 }
 
 async function githubJson(apiPath: string) {
   const response = await fetch('https://api.github.com/' + apiPath, { headers: githubHeaders })
-  if (!response.ok) throw new Error('GitHub API request failed: ' + response.status)
+  if (!response.ok) {
+    if (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
+      const reset = Number(response.headers.get('x-ratelimit-reset') || 0) * 1000
+      const minutes = reset > Date.now() ? Math.max(1, Math.round((reset - Date.now()) / 60000)) : null
+      throw new GitHubRateLimitError(minutes)
+    }
+    throw new Error('GitHub API request failed: ' + response.status)
+  }
   return response.json()
 }
 
@@ -77,52 +108,45 @@ function releaseSha(release: any): string | null {
   return /^Upstream-SHA: ([0-9a-f]{40})$/m.exec(release.body || '')?.[1] ?? null
 }
 
-// Latest upstream tagged release, peeled to its commit. Upstream tags are
-// annotated tag objects, so the ref must be peeled one level to the commit.
-async function stableTarget(): Promise<{ ref: string; sha: string }> {
-  const latest = await githubJson('repos/NousResearch/hermes-agent/releases/latest')
-  const tag = typeof latest?.tag_name === 'string' ? latest.tag_name : null
-  if (!tag) throw new Error('Official latest release returned no tag')
-  const ref = await githubJson('repos/NousResearch/hermes-agent/git/refs/tags/' + tag)
-  let sha = typeof ref?.object?.sha === 'string' ? ref.object.sha : null
-  if (ref?.object?.type === 'tag' && sha) {
-    const peeled = await githubJson('repos/NousResearch/hermes-agent/git/tags/' + sha)
-    sha = typeof peeled?.object?.sha === 'string' ? peeled.object.sha : sha
-  }
-  if (!sha) throw new Error('Official release tag ' + tag + ' returned no commit SHA')
-  return { ref: tag, sha }
-}
-
+// Two API calls per check: the stable track resolves the latest upstream tag,
+// then one compare covers distance and changelog for both tracks. The compare
+// API accepts a tag as head, so annotated tags never need peeling here.
 async function upstreamStatus(channel: UpdateChannel) {
-  let targetSha: string
   let compareRef: string
   if (channel === 'stable') {
-    const target = await stableTarget()
-    targetSha = target.sha
-    compareRef = target.ref
+    const latest = await githubJson('repos/NousResearch/hermes-agent/releases/latest')
+    const tag = typeof latest?.tag_name === 'string' ? latest.tag_name : null
+    if (!tag) throw new Error('Official latest release returned no tag')
+    compareRef = tag
   } else {
-    const latest = await githubJson('repos/NousResearch/hermes-agent/commits/main')
-    if (typeof latest?.sha !== 'string') throw new Error('Official main returned no commit SHA')
-    targetSha = latest.sha
     compareRef = 'main'
   }
-  if (targetSha === currentSha) return { targetSha, behind: 0, commits: [] }
 
+  const compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + currentSha + '...' + compareRef)
+  if (compared?.status === 'identical') return { targetSha: currentSha, behind: 0, commits: [] }
+
+  const behind = Number.isInteger(compared?.ahead_by) && compared.ahead_by >= 0 ? compared.ahead_by : null
+  const commits = Array.isArray(compared?.commits)
+    ? compared.commits.slice().reverse().map((entry: any) => ({
+        sha: entry.sha,
+        summary: String(entry.commit?.message || '').split('\n')[0],
+        author: String(entry.commit?.author?.name || ''),
+        at: Date.parse(entry.commit?.committer?.date || '') || 0
+      }))
+    : []
+  return { targetSha: compareRef, behind, commits }
+}
+
+async function readCheckCache(channel: UpdateChannel): Promise<any | null> {
+  const cached = await readJson('update-check-cache.json')
+  if (cached?.channel === channel && cached?.status?.fetchedAt) return cached
+  return null
+}
+
+async function writeCheckCache(channel: UpdateChannel, status: unknown): Promise<void> {
   try {
-    const compared = await githubJson('repos/NousResearch/hermes-agent/compare/' + currentSha + '...' + compareRef)
-    const behind = Number.isInteger(compared?.ahead_by) && compared.ahead_by >= 0 ? compared.ahead_by : null
-    const commits = Array.isArray(compared?.commits)
-      ? compared.commits.slice().reverse().map((entry: any) => ({
-          sha: entry.sha,
-          summary: String(entry.commit?.message || '').split('\n')[0],
-          author: String(entry.commit?.author?.name || ''),
-          at: Date.parse(entry.commit?.committer?.date || '') || 0
-        }))
-      : []
-    return { targetSha, behind, commits }
-  } catch {
-    return { targetSha, behind: null, commits: [] }
-  }
+    await writeJsonAtomic('update-check-cache.json', { channel, status })
+  } catch {}
 }
 
 export function installBleedingEdgeUpdater(): void {
@@ -137,11 +161,16 @@ export function installBleedingEdgeUpdater(): void {
     } catch {}
   }
 
-  ipcMain.handle('hermes:updates:check', async () => {
+  ipcMain.handle('hermes:updates:check', async (_event, opts) => {
     const channel = await readChannel()
+    const force = opts?.force === true
+    const cached = await readCheckCache(channel)
+    if (!force && cached && Date.now() - cached.status.fetchedAt < CHECK_CACHE_TTL_MS) {
+      return cached.status
+    }
     try {
       const upstream = await upstreamStatus(channel)
-      return {
+      const status = {
         supported: true,
         branch: channel,
         currentSha,
@@ -151,13 +180,21 @@ export function installBleedingEdgeUpdater(): void {
         updateAvailable: upstream.targetSha !== currentSha,
         fetchedAt: Date.now()
       }
+      await writeCheckCache(channel, status)
+      return status
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (cached) {
+        // API down or rate-limited: the last successful check is better than
+        // a hard failure. Its fetchedAt stays honest about its age.
+        return { ...cached.status, message: 'Live check failed (' + message + ') Showing the last successful check.' }
+      }
       return {
         supported: true,
         branch: channel,
         currentSha,
         error: 'check-failed',
-        message: error instanceof Error ? error.message : String(error),
+        message,
         fetchedAt: Date.now()
       }
     }
@@ -196,7 +233,7 @@ trap - EXIT`
 
   ipcMain.handle('hermes:updates:branch:set', async (_event, name) => {
     const channel: UpdateChannel = (channels as readonly string[]).includes(name) ? (name as UpdateChannel) : defaultChannel
-    await writeChannel(channel)
+    await writeJsonAtomic('update-channel.json', { channel })
     return { branch: channel }
   })
-}
+      }
