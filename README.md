@@ -7,7 +7,7 @@
 [![Upstream](https://img.shields.io/badge/upstream-NousResearch%2Fhermes--agent-111827?logo=github)](https://github.com/NousResearch/hermes-agent)
 [![Platform](https://img.shields.io/badge/macOS-Intel%20x86__64-111827?logo=apple)](#downloads)
 [![Tracks](https://img.shields.io/badge/tracks-bleeding%20edge%20%2B%20stable-f97316)](#update-tracks)
-[![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/Hermes-Desktop-Mac-Intel-Bleeding-Edge-And-Stable?display_name=tag&sort=semver)](../../releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/Hermes-Desktop-Mac-Intel-Unofficial?display_name=tag&sort=semver)](../../releases/latest)
 
 [Download bleeding edge](../../releases/latest) · [All releases](../../releases) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
 
