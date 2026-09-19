@@ -1,15 +1,15 @@
 <div align="center">
 
-# Hermes Desktop for Intel Mac
+# Hermes Desktop - Mac Intel | Bleeding Edge & Stable
 
-**`x86_64` builds of [NousResearch/Hermes Agent](https://github.com/NousResearch/hermes-agent), packaged automatically for Intel-based Macs - bleeding-edge from every upstream commit, or stable from tagged releases.**
+**The [Hermes Agent](https://github.com/NousResearch/hermes-agent) desktop app, built for Intel-based Macs (`x86_64`). Two release tracks, automatic builds, native in-app updates.**
 
 [![Upstream](https://img.shields.io/badge/upstream-NousResearch%2Fhermes--agent-111827?logo=github)](https://github.com/NousResearch/hermes-agent)
 [![Platform](https://img.shields.io/badge/macOS-Intel%20x86__64-111827?logo=apple)](#downloads)
 [![Tracks](https://img.shields.io/badge/tracks-bleeding%20edge%20%2B%20stable-f97316)](#update-tracks)
 [![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/hermes-intel-bleeding-edge?display_name=tag&sort=semver)](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest)
 
-[Download latest build](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) · [All releases](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
+[Download bleeding edge](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) · [All releases](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
 
 </div>
 
@@ -29,6 +29,20 @@ This repository publishes two tracks of the same app. The **only** difference be
 
 The DMG you install decides the starting track: a bleeding-edge DMG starts on bleeding edge, a stable DMG starts on stable. You can switch at any time inside the app - see below.
 
+## Downloads
+
+Pick one track - you can change it later in the app:
+
+| Track | Where to download | Notes |
+|---|---|---|
+| **Bleeding edge** | the [**Latest release**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) | The Latest badge always belongs to this track. Tag format: `bleeding-edge-<sha>` |
+| **Stable** | newest `stable-*` tag under [**All releases**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases) | Never carries the Latest badge, by design. Tag format: `stable-<version>` |
+
+Grab the `-mac-x64.dmg` asset. Each release names the exact upstream commit it was built from and includes SHA-256 checksums. The footer in the app shows your build's version and its commit distance from the track you follow.
+
+> [!CAUTION]
+> Review the upstream commit or tag and the checksums before installing. Because the app is unsigned and not notarized, macOS may block the first launch. Only install if you understand and accept the risks of an independent build.
+
 ## Switching tracks in the app
 
 Open the update dialog (the update button in the app footer, or **Settings - About - Check now**). A track picker at the top of the dialog offers **Bleeding edge** and **Stable**:
@@ -45,24 +59,6 @@ Open the update dialog (the update button in the app footer, or **Settings - Abo
 
 Valid values are `"bleeding-edge"` and `"stable"`. Quit the app, edit the file, and relaunch. If the file is missing, the app recreates it from the build's own track on first launch - it never overwrites a choice you made.
 
-## Downloads
-
-- **Bleeding edge:** always the [**Latest release**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest).
-- **Stable:** the newest `stable-*` tag under [**All releases**](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases).
-
-Each release names the exact upstream commit it was built from and includes SHA-256 checksums. The footer in the app shows your build's version and its commit distance from the track you follow.
-
-> [!CAUTION]
-> Review the upstream commit or tag and the checksums before installing. Because the app is unsigned and not notarized, macOS may block the first launch. Only install if you understand and accept the risks of an independent build.
-
-## How the pipeline works
-
-Two workflows, one per track, sharing the same build steps:
-
-- A lightweight check compares upstream (`main` HEAD or the latest tag) with the newest release here on that track. If nothing changed, the run exits without using a macOS runner.
-- On change, an Intel runner builds DMG and ZIP artifacts from the exact upstream commit, verifies the `x86_64` architecture, stamps the canonical Hermes version into the app, records checksums, and publishes the release under the track's tag namespace.
-- Builds never overlap. A five-minute cooldown holds the queue after each build.
-
 ## In-app updater
 
 The workflow injects an updater override into the Electron main process at build time ([`updater/`](updater)). For the active track it:
@@ -73,7 +69,18 @@ The workflow injects an updater override into the Electron main process at build
 4. removes the quarantine attribute;
 5. detaches the image and relaunches Hermes.
 
+Update checks use the unauthenticated GitHub API, which allows 60 requests per hour per IP. To stay well under that, each check costs two API calls and results are cached for ten minutes. If GitHub rate-limits a check, the dialog says so plainly and shows when to retry; if a previous check succeeded, the app keeps showing that result instead of an error.
+
 The updater force-overwrites the app and removes quarantine for this independent unsigned release channel. It can fail if the current user cannot write to `/Applications`, Hermes is running from another location, or GitHub or the network is unavailable. Inspect the workflows before relying on it.
+
+## How the pipeline works
+
+Two workflows, one per track, sharing the same build steps:
+
+- A lightweight check compares upstream (`main` HEAD or the latest tag) with the newest release here on that track. If nothing changed, the run exits without using a macOS runner.
+- On change, an Intel runner builds DMG and ZIP artifacts from the exact upstream commit, verifies the `x86_64` architecture, stamps the canonical Hermes version into the app, records checksums, and publishes the release under the track's tag namespace.
+- Builds never overlap. A five-minute cooldown holds the queue after each build.
+- Only bleeding-edge releases are marked as GitHub's Latest release, so the downloads above never jump between tracks.
 
 ## Changes from the original Intel rebuild
 
