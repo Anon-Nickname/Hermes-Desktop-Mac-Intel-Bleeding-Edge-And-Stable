@@ -7,9 +7,9 @@
 [![Upstream](https://img.shields.io/badge/upstream-NousResearch%2Fhermes--agent-111827?logo=github)](https://github.com/NousResearch/hermes-agent)
 [![Platform](https://img.shields.io/badge/macOS-Intel%20x86__64-111827?logo=apple)](#downloads)
 [![Tracks](https://img.shields.io/badge/tracks-bleeding%20edge%20%2B%20stable-f97316)](#update-tracks)
-[![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/hermes-intel-bleeding-edge?display_name=tag&sort=semver)](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Anon-Nickname/Hermes-Desktop-Mac-Intel-Bleeding-Edge-And-Stable?display_name=tag&sort=semver)](../../releases/latest)
 
-[Download bleeding edge](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) · [All releases](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
+[Download bleeding edge](../../releases/latest) · [All releases](../../releases) · [Browse upstream](https://github.com/NousResearch/hermes-agent)
 
 </div>
 
@@ -35,8 +35,8 @@ Pick one track - you can change it later in the app:
 
 | Track | Direct download (Intel DMG) | Release page |
 |---|---|---|
-| **Bleeding edge** - newest upstream `main` | **[⬇ Hermes-bleeding-edge-mac-x64.dmg](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest/download/Hermes-bleeding-edge-mac-x64.dmg)** | [Latest release](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/latest) (always carries the Latest badge) |
-| **Stable** - newest tagged upstream release | **[⬇ Hermes-stable-v2026.9.14-mac-x64.dmg](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/download/stable-v2026.9.14/Hermes-stable-v2026.9.14-mac-x64.dmg)** | [stable-v2026.9.14](https://github.com/Anon-Nickname/hermes-intel-bleeding-edge/releases/tag/stable-v2026.9.14) |
+| **Bleeding edge** - newest upstream `main` | **[⬇ Hermes-bleeding-edge-mac-x64.dmg](../../releases/latest/download/Hermes-bleeding-edge-mac-x64.dmg)** | [Latest release](../../releases/latest) (always carries the Latest badge) |
+| **Stable** - newest tagged upstream release | **[⬇ Hermes-stable-v2026.9.14-mac-x64.dmg](../../releases/download/stable-v2026.9.14/Hermes-stable-v2026.9.14-mac-x64.dmg)** | [stable-v2026.9.14](../../releases/tag/stable-v2026.9.14) |
 
 Both links download the `-mac-x64.dmg` for an Intel Mac directly - no hunting through asset lists. The bleeding-edge link is permanent: it always serves the newest bleeding-edge build. The stable link is updated automatically every time a new stable build is published.
 
