@@ -53,7 +53,6 @@ jobs:
       UPSTREAM_SHA: ${{ needs.discover.outputs.upstream_sha }}
       SHORT_SHA: ${{ needs.discover.outputs.short_sha }}
       TRACK: bleeding-edge
-      ARTIFACT_BASENAME: Hermes-${{ needs.discover.outputs.short_sha }}
       RELEASE_TAG: bleeding-edge-${{ needs.discover.outputs.short_sha }}
       RELEASE_TITLE: Hermes Intel bleeding edge - ${{ needs.discover.outputs.short_sha }}
     steps:
@@ -142,9 +141,9 @@ jobs:
           dmgs=(release/*-mac-x64.dmg); zips=(release/*-mac-x64.zip)
           test ${#dmgs[@]} -eq 1; test ${#zips[@]} -eq 1
           hdiutil verify "${dmgs[0]}"
-          mv "${dmgs[0]}" "release/${ARTIFACT_BASENAME}-mac-x64.dmg"
-          mv "${zips[0]}" "release/${ARTIFACT_BASENAME}-mac-x64.zip"
-          (cd release && shasum -a 256 "${ARTIFACT_BASENAME}-mac-x64.dmg" "${ARTIFACT_BASENAME}-mac-x64.zip" > SHA256SUMS.txt)
+          mv "${dmgs[0]}" "release/Hermes-bleeding-edge-mac-x64.dmg"
+          mv "${zips[0]}" "release/Hermes-bleeding-edge-mac-x64.zip"
+          (cd release && shasum -a 256 Hermes-bleeding-edge-mac-x64.dmg Hermes-bleeding-edge-mac-x64.zip > SHA256SUMS.txt)
 
       - name: Publish release
         working-directory: apps/desktop
@@ -160,8 +159,8 @@ jobs:
             gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi
           gh release create "$RELEASE_TAG" \
-            "release/${ARTIFACT_BASENAME}-mac-x64.dmg" \
-            "release/${ARTIFACT_BASENAME}-mac-x64.zip" \
+            "release/Hermes-bleeding-edge-mac-x64.dmg" \
+            "release/Hermes-bleeding-edge-mac-x64.zip" \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE" --notes-file "$notes" --latest=false
@@ -177,21 +176,6 @@ jobs:
           # workflow's badge re-pin uses.
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --latest
 
-      - name: Attach fixed-name download assets
-        working-directory: apps/desktop
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Fixed asset names give the README a permanent one-click download
-          # URL via /releases/latest/download/<name>. The files are byte-
-          # identical copies of this release's versioned assets.
-          cp "release/${ARTIFACT_BASENAME}-mac-x64.dmg" release/Hermes-bleeding-edge-mac-x64.dmg
-          cp "release/${ARTIFACT_BASENAME}-mac-x64.zip" release/Hermes-bleeding-edge-mac-x64.zip
-          gh release upload "$RELEASE_TAG" \
-            release/Hermes-bleeding-edge-mac-x64.dmg \
-            release/Hermes-bleeding-edge-mac-x64.zip \
-            --repo "$GITHUB_REPOSITORY" --clobber
 
   cooldown:
     needs: [discover, build]
