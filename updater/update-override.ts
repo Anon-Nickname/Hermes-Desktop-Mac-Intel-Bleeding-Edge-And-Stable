@@ -237,3 +237,5 @@ trap - EXIT`
     return { branch: channel }
   })
 }
+
+// Injected at build time by updater/inject.py; do not edit the placeholders by hand.
