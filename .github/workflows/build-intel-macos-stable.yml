@@ -166,7 +166,7 @@ jobs:
             "release/${ARTIFACT_BASENAME}-mac-x64.zip" \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "$RELEASE_TITLE" --notes-file "$notes"
+            --title "$RELEASE_TITLE" --notes-file "$notes" --latest=false
 
   cooldown:
     needs: [discover, build]
