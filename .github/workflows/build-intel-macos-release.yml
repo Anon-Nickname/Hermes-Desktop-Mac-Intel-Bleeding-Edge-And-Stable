@@ -76,7 +76,7 @@ jobs:
 
       - name: Inject independent native updater override
         env:
-          RELEASE_REPO: Anon-Nickname/hermes-intel-bleeding-edge
+          RELEASE_REPO: ${{ github.repository }}
         run: python3 pipeline/updater/inject.py
 
       - name: Patch update dialog with track picker
