@@ -149,12 +149,28 @@ jobs:
           set -euo pipefail
           notes="$RUNNER_TEMP/release.md"
           printf 'Upstream-SHA: %s\nTrack: %s\n\nUnofficial bleeding-edge Intel macOS build from [NousResearch/hermes-agent@%s](https://github.com/NousResearch/hermes-agent/commit/%s). Not signed or notarized by Apple. Includes the repository-disclosed updater override.\n' "$UPSTREAM_SHA" "$TRACK" "$SHORT_SHA" "$UPSTREAM_SHA" > "$notes"
+          # A force rebuild of an already-released upstream commit recreates
+          # the release from scratch.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
           gh release create "$RELEASE_TAG" \
             "release/${ARTIFACT_BASENAME}-mac-x64.dmg" \
             "release/${ARTIFACT_BASENAME}-mac-x64.zip" \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "$RELEASE_TITLE" --notes-file "$notes" --latest
+            --title "$RELEASE_TITLE" --notes-file "$notes" --latest=false
+
+      - name: Mark release as Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The badge is claimed separately from creation: creating with
+          # make_latest=true was rejected for this repository's token, while a
+          # plain create plus an explicit edit is the same path the stable
+          # workflow's badge re-pin uses.
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --latest
 
   cooldown:
     needs: [discover, build]
