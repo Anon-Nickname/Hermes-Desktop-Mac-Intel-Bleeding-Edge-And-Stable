@@ -65,7 +65,10 @@ picker_component = '''function UpdateChannelPicker({
 '''
 
 # 1. Define the picker component above AboutSettings.
-replace_once('export function AboutSettings() {', picker_component + 'export function AboutSettings() {')
+replace_once(
+    'export function AboutSettings({ subpage }: AboutSettingsProps = {}) {',
+    picker_component + 'export function AboutSettings({ subpage }: AboutSettingsProps = {}) {',
+)
 
 # 2. Track the active channel in AboutSettings and re-check after a switch.
 channel_state = '''
