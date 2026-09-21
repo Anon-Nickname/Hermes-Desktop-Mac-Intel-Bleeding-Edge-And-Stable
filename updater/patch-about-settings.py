@@ -64,11 +64,16 @@ picker_component = '''function UpdateChannelPicker({
 
 '''
 
-# 1. Define the picker component above AboutSettings.
-replace_once(
+# 1. Define the picker component above AboutSettings. Stable releases may
+# predate the optional settings subpage prop, while bleeding-edge builds use it.
+about_signatures = [
     'export function AboutSettings({ subpage }: AboutSettingsProps = {}) {',
-    picker_component + 'export function AboutSettings({ subpage }: AboutSettingsProps = {}) {',
-)
+    'export function AboutSettings() {',
+]
+matched_signatures = [signature for signature in about_signatures if text.count(signature) == 1]
+if len(matched_signatures) != 1:
+    sys.exit(f'about-settings.tsx signature missing or ambiguous: {matched_signatures!r}')
+replace_once(matched_signatures[0], picker_component + matched_signatures[0])
 
 # 2. Track the active channel in AboutSettings and re-check after a switch.
 channel_state = '''
