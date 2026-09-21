@@ -31,7 +31,8 @@ import { promisify } from 'node:util'
  *   never drives the update offer.
  *
  * All GitHub API calls are unauthenticated (60 requests/hour per IP), so
- * checks are kept to two calls on stable and at most three on bleeding,
+ * release pages are fetched until exhausted (100 releases per page); other calls
+ * are kept to one on stable and at most two on bleeding,
  * cached for ten minutes, and fall back to the last successful check when
  * the API is unavailable. A rate-limit 403 is reported to the dialog as
  * what it is, with the reset time.
@@ -118,8 +119,13 @@ function releaseSha(release: any): string | null {
 // ignored. /releases/latest is never used: the Latest badge is shared
 // between both tracks and says nothing about either track's newest build.
 async function ownReleases(channel: UpdateChannel) {
-  const releases = await githubJson('repos/' + releaseRepo + '/releases?per_page=50')
-  if (!Array.isArray(releases)) throw new Error('Unexpected releases response')
+  const releases: any[] = []
+  for (let page = 1; ; page++) {
+    const batch = await githubJson('repos/' + releaseRepo + '/releases?per_page=100&page=' + page)
+    if (!Array.isArray(batch)) throw new Error('Unexpected releases response')
+    releases.push(...batch)
+    if (batch.length < 100) break
+  }
   const candidates = releases.filter(
     (release: any) =>
       !release?.draft &&
