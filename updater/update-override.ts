@@ -284,21 +284,63 @@ export function installBleedingEdgeUpdater(): void {
     if (!installableSha || installableSha === currentSha) {
       throw new Error('No newer Intel ' + channel + ' build is available yet')
     }
-    const asset = release.assets?.find((item: any) => item.name.endsWith('-mac-x64.dmg'))
+    const asset = release.assets?.find((item: any) => item.name === `Hermes-${channel}-mac-x64.dmg`)
     if (!asset?.browser_download_url) throw new Error('Latest ' + channel + ' release has no Intel macOS DMG')
+    // Refuse assets without a SHA-256 digest supplied by the GitHub release API.
+    // Never start the install script on unverified or unexpected metadata.
+    const digest = /^sha256:([0-9a-f]{64})$/i.exec(String(asset.digest ?? ''))?.[1]?.toLowerCase()
+    if (!digest) throw new Error('Latest ' + channel + ' DMG has no valid SHA-256 digest')
     const script = `set -euo pipefail
 DMG_URL="$1"
-TMP_DMG="/tmp/Hermes-intel-update.dmg"
-MOUNT_POINT="$(mktemp -d /tmp/hermes-intel-mount.XXXXXX)"
-curl -fL "$DMG_URL" -o "$TMP_DMG"
-hdiutil attach "$TMP_DMG" -mountpoint "$MOUNT_POINT" -nobrowse
-trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
-rm -rf /Applications/Hermes.app
-cp -R "$MOUNT_POINT/Hermes.app" /Applications/Hermes.app
-xattr -dr com.apple.quarantine /Applications/Hermes.app
-hdiutil detach "$MOUNT_POINT"
-trap - EXIT`
-    await execFileAsync('/bin/bash', ['-c', script, 'hermes-intel-updater', asset.browser_download_url])
+EXPECTED_SHA256="$2"
+APP="/Applications/Hermes.app"
+WORK="$(mktemp -d /Applications/.hermes-intel-update.XXXXXX)"
+DMG="$WORK/update.dmg"
+MOUNT="$WORK/mount"
+STAGED="$WORK/Hermes.app"
+BACKUP="$WORK/previous.app"
+MOUNTED=0
+COMMITTED=0
+cleanup() {
+  status=$?
+  trap - EXIT
+  if [ "$MOUNTED" -eq 1 ]; then hdiutil detach "$MOUNT" >/dev/null 2>&1 || true; fi
+  if [ "$status" -ne 0 ] && [ -d "$BACKUP" ]; then
+    rm -rf "$APP"
+    if ! mv "$BACKUP" "$APP"; then
+      echo "Restore failed; previous Hermes.app retained at $BACKUP" >&2
+      exit "$status"
+    fi
+  fi
+  rm -f "$DMG"
+  rmdir "$MOUNT" 2>/dev/null || true
+  if [ "$status" -eq 0 ] && [ "$COMMITTED" -eq 1 ]; then
+    # Keep old app on the same /Applications volume for manual rollback
+    # if the replacement launches badly; never delete the only backup.
+    echo "Previous Hermes.app backup retained at $BACKUP" >&2
+  else
+    rm -rf "$STAGED"
+    rmdir "$WORK" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [ ! -d "$APP" ] || [ -L "$APP" ]; then echo 'Expected installed Hermes.app is missing or a symlink' >&2; exit 1; fi
+mkdir "$MOUNT"
+curl -fL --retry 2 "$DMG_URL" -o "$DMG"
+printf '%s  %s\\n' "$EXPECTED_SHA256" "$DMG" | shasum -a 256 -c -
+hdiutil attach "$DMG" -mountpoint "$MOUNT" -readonly -nobrowse
+MOUNTED=1
+if [ ! -f "$MOUNT/Hermes.app/Contents/MacOS/Hermes" ]; then echo 'Verified DMG has no Hermes.app executable' >&2; exit 1; fi
+cp -R "$MOUNT/Hermes.app" "$STAGED"
+if [ ! -f "$STAGED/Contents/MacOS/Hermes" ]; then echo 'Staged Hermes.app is incomplete' >&2; exit 1; fi
+xattr -dr com.apple.quarantine "$STAGED"
+mv "$APP" "$BACKUP"
+mv "$STAGED" "$APP"
+COMMITTED=1`
+    await execFileAsync('/bin/bash', ['-c', script, 'hermes-intel-updater', asset.browser_download_url, digest])
     app.relaunch()
     app.quit()
     return { ok: true }
