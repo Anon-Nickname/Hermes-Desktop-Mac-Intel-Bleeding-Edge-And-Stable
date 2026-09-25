@@ -100,17 +100,37 @@ jobs:
           cache: npm
 
       - name: Stamp desktop package with canonical Hermes version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import json
           import re
           from pathlib import Path
 
+          # Older tagged releases declare a literal CLI version. Current
+          # upstream keeps source package versions at 0.0.0; resolve the
+          # latest published release's stamped project version instead.
           init_text = Path('hermes_cli/__init__.py').read_text()
-          match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
-          if not match:
-              raise SystemExit('Could not resolve canonical Hermes version')
-          version = match.group(1)
+          legacy = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
+          if legacy:
+              version = legacy.group(1)
+          else:
+              import subprocess
+              import tomllib
+              release_tag = subprocess.check_output(
+                  ['gh', 'api', 'repos/NousResearch/hermes-agent/releases/latest', '--jq', '.tag_name'],
+                  text=True,
+              ).strip()
+              if not re.fullmatch(r'v20\d{2}\.\d{1,2}\.\d{1,2}', release_tag):
+                  raise SystemExit(f'Unexpected upstream release tag: {release_tag!r}')
+              subprocess.run(['git', 'fetch', '--depth=1', 'origin', 'refs/tags/' + release_tag], check=True)
+              tagged_project = subprocess.check_output(
+                  ['git', 'show', 'FETCH_HEAD:pyproject.toml'], text=True,
+              )
+              version = tomllib.loads(tagged_project)['project']['version']
+          if not isinstance(version, str) or not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', version) or version == '0.0.0':
+              raise SystemExit(f'Invalid canonical Hermes version: {version!r}')
 
           package_path = Path('apps/desktop/package.json')
           package = json.loads(package_path.read_text())
