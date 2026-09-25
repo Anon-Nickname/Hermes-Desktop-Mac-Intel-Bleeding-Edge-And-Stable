@@ -114,9 +114,16 @@ replace_once(
 )
 
 # 3. Render the picker above the idle view (client updates only).
-replace_once(
+idle_anchors = [
     "        {phase === 'idle' && (\n          <IdleView",
-    "        {phase === 'idle' && (\n          <>\n            {!isBackend && (\n"
+    "        {phase === 'idle' && (isBackend || !status?.retirement) && (\n          <IdleView",
+]
+matched_idle = [anchor for anchor in idle_anchors if text.count(anchor) == 1]
+if len(matched_idle) != 1:
+    sys.exit(f'updates-overlay.tsx idle anchor missing or ambiguous: {matched_idle!r}')
+replace_once(
+    matched_idle[0],
+    matched_idle[0].replace('          <IdleView', '          <>\n            {!isBackend && (', 1) + '\n'
     '              <div className="px-6 pt-4">\n'
     '                <UpdateChannelPicker channel={updateChannel} disabled={checking} onSwitch={handleChannelSwitch} />\n'
     '                {(status?.upstreamBehind ?? 0) > 0 && (\n'
@@ -127,9 +134,11 @@ replace_once(
     '          <IdleView',
 )
 replace_once(
-    '            updateAvailable={updateAvailable}\n          />\n        )}',
-    '            updateAvailable={updateAvailable}\n          />\n          </>\n        )}',
+    '            updateAvailable={updateAvailable}\n            version={desktopVersion}\n          />\n        )}' if '            version={desktopVersion}\n          />\n        )}' in text else '            updateAvailable={updateAvailable}\n          />\n        )}',
+    '            updateAvailable={updateAvailable}\n            version={desktopVersion}\n          />\n          </>\n        )}' if '            version={desktopVersion}\n          />\n        )}' in text else '            updateAvailable={updateAvailable}\n          />\n          </>\n        )}',
 )
 
+if '          <IdleView' not in text or '<UpdateChannelPicker channel={updateChannel}' not in text:
+    sys.exit('Picker or idle view missing after patch')
 target.write_text(text)
 print('Patched updates-overlay.tsx with the update track picker')

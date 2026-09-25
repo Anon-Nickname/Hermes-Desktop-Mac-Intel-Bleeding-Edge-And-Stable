@@ -22,6 +22,100 @@ workspace = Path(os.environ.get('GITHUB_WORKSPACE', '.'))
 target = workspace / 'apps/desktop/src/app/settings/about-settings.tsx'
 text = target.read_text()
 
+# Current upstream moves the About update card into a shared component.
+# Tagged stable still uses the legacy patch below.
+modern_target = workspace / 'apps/desktop/src/components/update-status.tsx'
+if 'export function AboutSettings({ subpage }: AboutSettingsProps = {}): ReactElement {' in text:
+    if not modern_target.exists():
+        sys.exit('Modern UpdateStatusCard missing')
+    modern = modern_target.read_text()
+
+    def modern_replace(anchor: str, replacement: str) -> None:
+        global modern
+        count = modern.count(anchor)
+        if count != 1:
+            sys.exit(f'update-status.tsx anchor missing or ambiguous ({count}x): {anchor[:70]!r}')
+        modern = modern.replace(anchor, replacement, 1)
+
+    modern_replace("import { type ReactElement, type ReactNode, useState } from 'react'",
+                   "import { type ReactElement, type ReactNode, useEffect, useState } from 'react'")
+    picker = '''function UpdateChannelPicker({
+  channel,
+  disabled,
+  onSwitch
+}: {
+  channel: 'bleeding-edge' | 'stable'
+  disabled: boolean
+  onSwitch: (next: 'bleeding-edge' | 'stable') => void
+}): ReactElement {
+  return (
+    <div className="flex items-center justify-center gap-1 rounded-lg bg-muted p-1">
+      {(['bleeding-edge', 'stable'] as const).map(option => (
+        <button
+          className={cn(
+            'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+            option === channel
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          )}
+          disabled={disabled}
+          key={option}
+          onClick={() => onSwitch(option)}
+          type="button"
+        >
+          {option === 'stable' ? 'Stable' : 'Bleeding edge'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+'''
+    modern_replace('export function UpdateStatusCard({', picker + 'export function UpdateStatusCard({')
+    state = '''  const [updateChannel, setUpdateChannel] = useState<'bleeding-edge' | 'stable'>('bleeding-edge')
+  useEffect(() => {
+    if (isBackend) return
+    let live = true
+    void window.hermesDesktop?.updates?.getBranch?.()
+      .then(result => {
+        if (live && (result?.branch === 'stable' || result?.branch === 'bleeding-edge')) {
+          setUpdateChannel(result.branch)
+        }
+      })
+      .catch(() => {})
+    return () => { live = false }
+  }, [isBackend])
+  const handleChannelSwitch = (next: 'bleeding-edge' | 'stable') => {
+    if (next === updateChannel) return
+    setUpdateChannel(next)
+    void window.hermesDesktop?.updates?.setBranch?.(next)
+      .then(() => checkUpdates({ force: true }))
+      .catch(() => {})
+  }
+'''
+    modern_replace('  const [justChecked, setJustChecked] = useState<boolean>(false)',
+                   '  const [justChecked, setJustChecked] = useState<boolean>(false)\n' + state)
+    card = '''      {!isBackend && (
+        <div className="mt-3 border-t border-border/70 pt-3">
+          <Button onClick={() => openUpdateOverlayFor('client')} size="sm" variant="textStrong">
+            Open updates
+          </Button>
+          <div className="mt-3">
+            <UpdateChannelPicker channel={updateChannel} disabled={checking || view.applying} onSwitch={handleChannelSwitch} />
+          </div>
+          {(status?.upstreamBehind ?? 0) > 0 && (
+            <p className="mt-1.5 text-xs text-muted-foreground">{status.upstreamBehind} commits behind upstream main</p>
+          )}
+        </div>
+      )}
+'''
+    anchor = "      {view.tone !== 'unsupported' && (\n        <div className=\"mt-3 flex flex-wrap items-center gap-4\">"
+    modern_replace(anchor, card + anchor)
+    modern_target.write_text(modern)
+    print('Patched modern update-status.tsx with About client entry and track picker')
+    sys.exit(0)
+
+
 
 def replace_once(anchor: str, replacement: str) -> None:
     global text
