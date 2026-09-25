@@ -89,6 +89,13 @@ jobs:
           node-version: 24.19.0
           cache: npm
 
+      - name: Set up pinned Python for macOS package preparation
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: python
+          extras: ''
+          archive-inputs: 'false'
+
       - name: Stamp desktop package with canonical Hermes version
         env:
           GH_TOKEN: ${{ github.token }}
