@@ -3,11 +3,9 @@
 
 Reads pipeline/updater/update-override.ts, substitutes the build's release
 repository, upstream commit and baked default channel, writes it into the
-Electron main process sources, and registers it from the bundle entry.
-Current upstream main enters through entry.ts; older trees (tagged stable
-releases before entry.ts existed) enter through main.ts directly - both
-shapes are handled. Fails loudly if no known entry exists so a build never
-ships a silently missing override.
+Electron main process sources and registers it from the actual bundler
+entrypoint: entry.ts on older tagged releases, main.ts on current upstream.
+Fails closed if the bundler entry is unknown rather than shipping dead code.
 """
 import os
 import sys
@@ -32,34 +30,43 @@ for placeholder, value in replacements.items():
 target = workspace / 'apps/desktop/electron/bleeding-edge-updater.ts'
 target.write_text(template)
 
-entry = workspace / 'apps/desktop/electron/entry.ts'
-main_ts = workspace / 'apps/desktop/electron/main.ts'
-if entry.exists():
-    text = entry.read_text()
+# Select the entry actually used by this upstream revision's desktop builder.
+# Older tagged releases bundle entry.ts; current main bundles main.ts directly.
+bundler = workspace / 'apps/desktop/scripts/bundle-electron-main.mjs'
+if not bundler.exists():
+    sys.exit('Desktop Electron bundler missing; cannot verify the entrypoint')
+bundler_text = bundler.read_text()
+main_entry = "entryPoints: [join(source, 'apps/desktop/electron/main.ts')]"
+legacy_entry = "const mainEntry = resolve(root, 'electron/entry.ts')"
+if main_entry in bundler_text and legacy_entry not in bundler_text:
+    via = 'main.ts'
+elif legacy_entry in bundler_text and main_entry not in bundler_text:
+    via = 'entry.ts'
+else:
+    sys.exit('Unknown or ambiguous Electron main entrypoint; refuse inert override')
+entry = workspace / 'apps/desktop/electron' / via
+if not entry.exists():
+    sys.exit(f'Expected Electron entrypoint {via} missing')
+text = entry.read_text()
+if 'installBleedingEdgeUpdater' in text:
+    sys.exit(f'{via} already references installBleedingEdgeUpdater')
+if via == 'entry.ts':
     anchor = "  await import('./main')"
     if text.count(anchor) != 1:
-        sys.exit(f'entry.ts anchor not unique/found: {anchor!r} ({text.count(anchor)}x)')
+        sys.exit(f'entry.ts anchor not unique/found ({text.count(anchor)}x)')
     text = text.replace(
         anchor,
         anchor
         + "\n  const { installBleedingEdgeUpdater } = await import('./bleeding-edge-updater')\n  installBleedingEdgeUpdater()",
         1,
     )
-    entry.write_text(text)
-    via = 'entry.ts'
-elif main_ts.exists():
-    text = main_ts.read_text()
-    if 'installBleedingEdgeUpdater' in text:
-        sys.exit('main.ts already references installBleedingEdgeUpdater')
-    # Import declarations hoist; appending runs the installer after main.ts's
-    # own module-scope handler registrations and before app.whenReady fires.
+else:
+    # Import hoists; invocation executes after main.ts's module-scope IPC
+    # registrations and before app.whenReady callbacks run.
     text += (
         "\nimport { installBleedingEdgeUpdater } from './bleeding-edge-updater'\n"
         'installBleedingEdgeUpdater()\n'
     )
-    main_ts.write_text(text)
-    via = 'main.ts'
-else:
-    sys.exit('Neither entry.ts nor main.ts found under apps/desktop/electron')
+entry.write_text(text)
 
 print(f"Injected updater override via {via} (release repo {replacements['__RELEASE_REPO__']}, default channel {replacements['__DEFAULT_CHANNEL__']})")
